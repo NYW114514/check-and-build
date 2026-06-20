@@ -116,7 +116,9 @@ export default function AdminPage() {
         }
       })
     )
+
     setTasks(enriched)
+
     const enrollmentMap: Record<string, string[]> = {}
     enriched.forEach(t => {
       enrollmentMap[t.id] = []
@@ -691,7 +693,7 @@ async function handleRemoveTask(taskId: string, userId: string) {
                         <p className="text-xs text-gray-400 italic">No submission yet</p>
                       </div>
                     )}
-                    {selectedProject.status === 'pending' && (
+                    {selectedProject.status !== 'finished' && (
                       <div className="px-4 py-2 border-t border-gray-100 bg-white">
                         <p className="text-xs font-bold text-gray-400 uppercase mb-2">
                           Assigned ({(taskEnrollments[t.id] ?? []).length}/{t.max_developers})
