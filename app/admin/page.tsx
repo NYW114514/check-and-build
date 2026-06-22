@@ -18,6 +18,7 @@ interface TaskWithDetails extends Task {
   review?: {
     decision: string
     feedback: string | null
+    reviewer_link?: string | null
     reviewer_name?: string
   }
 }
@@ -35,6 +36,10 @@ export default function AdminPage() {
   const [developerList, setDeveloperList] = useState<User[]>([])
   const [taskEnrollments, setTaskEnrollments] = useState<Record<string, string[]>>({})
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
+  const [finalLink, setFinalLink] = useState('')
+  const [finalComment, setFinalComment] = useState('')
+  const [showFinalForm, setShowFinalForm] = useState(false)
+
   const [editTask, setEditTask] = useState({
     title: '',
     description: '',
@@ -111,6 +116,7 @@ export default function AdminPage() {
           review: review ? {
             decision: review.decision,
             feedback: review.feedback,
+            reviewer_link: review.reviewer_link,
             reviewer_name: reviewerName,
           } : undefined,
         }
@@ -146,56 +152,98 @@ export default function AdminPage() {
     return flow[current] ?? null
   }
 
-  async function handleUpdateStatus() {
-    if (!selectedProject) return
-    const nextStatus = getNextStatus(selectedProject.status)
-    if (!nextStatus) return setMessage('Project is already finished')
+async function handleUpdateStatus() {
+  if (!selectedProject) return
+  const nextStatus = getNextStatus(selectedProject.status)
+  if (!nextStatus) return setMessage('Project is already finished')
 
-    if (nextStatus === 'in_review') {
-      const hasProgress = tasks.some(t => t.status === 'submitted' || t.status === 'approved')
-      if (!hasProgress) return setMessage('Cannot move to review before any task is submitted or approved')
-    }
-
-    if (nextStatus === 'ready_for_admin' || nextStatus === 'pending_deployment') {
-      const allApproved = tasks.length > 0 && tasks.every(t => t.status === 'approved')
-      if (!allApproved) return setMessage('All tasks must be approved before proceeding')
-    }
-
-    try {
-      if (nextStatus === 'finished') {
-        const { data: pendingTxns } = await supabase
-          .from('point_transactions')
-          .select('user_id, amount')
-          .eq('project_id', selectedProject.id)
-          .eq('status', 'pending')
-
-        await supabase
-          .from('point_transactions')
-          .update({ status: 'earned' })
-          .eq('project_id', selectedProject.id)
-          .eq('status', 'pending')
-
-        if (pendingTxns) {
-          const userTotals: Record<string, number> = {}
-          pendingTxns.forEach(t => {
-            userTotals[t.user_id] = (userTotals[t.user_id] ?? 0) + t.amount
-          })
-          await Promise.all(
-            Object.entries(userTotals).map(([uid, pts]) =>
-              supabase.rpc('increment_points', { uid, pts })
-            )
-          )
-        }
-      }
-
-      const updated = await updateProjectStatus(selectedProject.id, nextStatus)
-      setSelectedProject(updated)
-      setProjects(prev => prev.map(p => p.id === updated.id ? updated : p))
-      setMessage(`Project status updated to ${nextStatus}`)
-    } catch (e: unknown) {
-      setMessage(e instanceof Error ? e.message : 'Failed to update status')
-    }
+  if (nextStatus === 'in_review') {
+    const hasProgress = tasks.some(t => t.status === 'submitted' || t.status === 'approved')
+    if (!hasProgress) return setMessage('Cannot move to review before any task is submitted or approved')
   }
+
+  if (nextStatus === 'ready_for_admin' || nextStatus === 'pending_deployment') {
+    const allApproved = tasks.length > 0 && tasks.every(t => t.status === 'approved')
+    if (!allApproved) return setMessage('All tasks must be approved before proceeding')
+  }
+
+  if (nextStatus === 'finished') {
+    setShowFinalForm(true)
+    return
+  }
+
+  try {
+    if (nextStatus === 'active' && !selectedProject.contact_email && currentUser?.email) {
+      await supabase
+        .from('projects')
+        .update({ contact_email: currentUser.email })
+        .eq('id', selectedProject.id)
+    }
+
+    const updated = await updateProjectStatus(selectedProject.id, nextStatus)
+    setSelectedProject(updated)
+    setProjects(prev => prev.map(p => p.id === updated.id ? updated : p))
+    setMessage(`Project status updated to ${nextStatus}`)
+  } catch (e: unknown) {
+    setMessage(e instanceof Error ? e.message : 'Failed to update status')
+  }
+}
+
+async function handleFinishProject() {
+  if (!selectedProject || !currentUser) return
+  try {
+    const { data: pendingTxns } = await supabase
+      .from('point_transactions')
+      .select('user_id, amount')
+      .eq('project_id', selectedProject.id)
+      .eq('status', 'pending')
+
+    await supabase
+      .from('point_transactions')
+      .update({ status: 'earned' })
+      .eq('project_id', selectedProject.id)
+      .eq('status', 'pending')
+
+    if (pendingTxns) {
+      const userTotals: Record<string, number> = {}
+      pendingTxns.forEach(t => {
+        userTotals[t.user_id] = (userTotals[t.user_id] ?? 0) + t.amount
+      })
+      await Promise.all(
+        Object.entries(userTotals).map(([uid, pts]) =>
+          supabase.rpc('increment_points', { uid, pts })
+        )
+      )
+    }
+
+    await supabase
+      .from('projects')
+      .update({
+        final_link: finalLink || null,
+        final_comment: finalComment || null,
+      })
+      .eq('id', selectedProject.id)
+
+    await supabase.from('project_reviews').insert({
+      project_id: selectedProject.id,
+      reviewer_id: currentUser.id,
+      stage: 'admin_final',
+      decision: 'approved',
+      feedback: finalComment || null,
+      reviewer_link: finalLink || null,
+    })
+
+    const updated = await updateProjectStatus(selectedProject.id, 'finished')
+    setSelectedProject(updated)
+    setProjects(prev => prev.map(p => p.id === updated.id ? updated : p))
+    setShowFinalForm(false)
+    setFinalLink('')
+    setFinalComment('')
+    setMessage('Project finished and points settled')
+  } catch (e: unknown) {
+    setMessage(e instanceof Error ? e.message : 'Failed to finish project')
+  }
+}
 
   async function handleCreateProject() {
     if (!newProject.title) return setMessage('Project title is required')
@@ -219,6 +267,11 @@ export default function AdminPage() {
         priority: newProject.priority,
         status: 'pending',
         intake_payload: parsedPayload,
+        contact_email: currentUser?.email ?? null,
+        admin_feedback: null,
+        l3_owner_id: null,
+        final_link: null,
+        final_comment: null,
       })
       setProjects(prev => [project, ...prev])
       setNewProject({ title: '', description: '', priority: 'standard', subscriber_id: '', main_contact_id: '', intake_payload: '' })
@@ -242,6 +295,7 @@ export default function AdminPage() {
         status: 'open',
         point_value: 10,
         max_developers: 3,
+        return_to_reviewer_id: null,
       })
       setTasks(prev => [...prev, task])
       setNewTask({ title: '', description: '', dod_criteria: '', difficulty: 'basic' })
@@ -271,18 +325,49 @@ export default function AdminPage() {
   }
 }
 
-async function handleDeleteTask(taskId: string) {
-  const task = tasks.find(t => t.id === taskId)
-  if (!task) return
-  if (task.status !== 'open') return setMessage('Can only delete open tasks with no enrollments')
-  try {
-    await supabase.from('tasks').delete().eq('id', taskId)
-    setTasks(prev => prev.filter(t => t.id !== taskId))
-    setMessage('Task deleted')
-  } catch (e: unknown) {
-    setMessage(e instanceof Error ? e.message : 'Failed to delete task')
+  async function handleDeleteTask(taskId: string) {
+    try {
+      await supabase.from('tasks').update({ approved_submission_id: null }).eq('id', taskId)
+      await supabase.from('point_transactions').delete().eq('task_id', taskId)
+      await supabase.from('reviews').delete().eq('task_id', taskId)
+      await supabase.from('submissions').delete().eq('task_id', taskId)
+      await supabase.from('task_enrollments').delete().eq('task_id', taskId)
+      await supabase.from('tasks').delete().eq('id', taskId)
+      setTasks(prev => prev.filter(t => t.id !== taskId))
+      setMessage('Task deleted')
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Failed to delete task')
+    }
   }
-}
+
+  async function handleDeleteProject(projectId: string) {
+    try {
+      const { data: projectTasks } = await supabase
+        .from('tasks').select('id').eq('project_id', projectId)
+      const taskIds = (projectTasks ?? []).map((t: any) => t.id)
+
+      if (taskIds.length > 0) {
+        await supabase.from('tasks').update({ approved_submission_id: null }).in('id', taskIds)
+      }
+      await supabase.from('project_reviews').delete().eq('project_id', projectId)
+      await supabase.from('point_transactions').delete().eq('project_id', projectId)
+      if (taskIds.length > 0) {
+        await supabase.from('reviews').delete().in('task_id', taskIds)
+        await supabase.from('submissions').delete().in('task_id', taskIds)
+        await supabase.from('task_enrollments').delete().in('task_id', taskIds)
+        await supabase.from('tasks').delete().eq('project_id', projectId)
+      }
+      await supabase.from('projects').delete().eq('id', projectId)
+      setProjects(prev => prev.filter(p => p.id !== projectId))
+      if (selectedProject?.id === projectId) {
+        setSelectedProject(null)
+        setTasks([])
+      }
+      setMessage('Project deleted')
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Failed to delete project')
+    }
+  }
 
   async function handleAssignTask(taskId: string, userId: string) {
   const task = tasks.find(t => t.id === taskId)
@@ -372,6 +457,42 @@ async function handleRemoveTask(taskId: string, userId: string) {
           <button onClick={() => setMessage('')} className="text-blue-400 hover:text-blue-600">✕</button>
         </div>
       )}
+      
+      {showFinalForm && (
+        <div className="mb-4 p-4 border border-teal-200 rounded-lg bg-teal-50">
+          <h3 className="font-medium text-sm text-teal-700 mb-3">Final Approval — Mark Project Finished</h3>
+          <div className="space-y-2">
+            <input
+              type="text"
+              placeholder="Final link (optional)"
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+              value={finalLink}
+              onChange={e => setFinalLink(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="Final comment (optional)"
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+              value={finalComment}
+              onChange={e => setFinalComment(e.target.value)}
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={handleFinishProject}
+                className="px-4 py-2 bg-teal-600 text-white text-sm rounded hover:bg-teal-700"
+              >
+                Confirm Finish
+              </button>
+              <button
+                onClick={() => setShowFinalForm(false)}
+                className="px-4 py-2 border border-gray-300 text-gray-600 text-sm rounded hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-6">
 
@@ -457,7 +578,17 @@ async function handleRemoveTask(taskId: string, userId: string) {
                   selectedProject?.id === p.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'
                 }`}
               >
-                <div className="font-medium text-sm">{p.title}</div>
+
+                <div className="flex items-center justify-between">
+                  <div className="font-medium text-sm">{p.title}</div>
+                  <button
+                    onClick={e => { e.stopPropagation(); handleDeleteProject(p.id) }}
+                    className="text-xs text-red-400 hover:text-red-600"
+                  >
+                    Delete
+                  </button>
+                </div>
+
                 <div className="flex gap-2 mt-1 flex-wrap">
                   <span className={`text-xs px-2 py-0.5 rounded ${statusColors[p.status]}`}>{p.status}</span>
                   <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700">{p.priority}</span>
@@ -591,7 +722,7 @@ async function handleRemoveTask(taskId: string, userId: string) {
                             Edit
                           </button>
                         )}
-                        {t.status === 'open' && (taskEnrollments[t.id] ?? []).length === 0 && (
+                        {selectedProject.status !== 'finished' && (
                           <button
                             onClick={() => handleDeleteTask(t.id)}
                             className="text-xs px-2 py-1 border border-red-200 text-red-500 rounded hover:bg-red-50"
@@ -684,6 +815,16 @@ async function handleRemoveTask(taskId: string, userId: string) {
                         </span>
                         {t.review.feedback && (
                           <p className="text-xs text-gray-500 mt-1">Feedback: {t.review.feedback}</p>
+                        )}
+                        {t.review.reviewer_link && (
+                          <a
+                            href={t.review.reviewer_link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-blue-500 hover:underline block mt-0.5"
+                          >
+                            Reviewer link: {t.review.reviewer_link}
+                          </a>
                         )}
                       </div>
                     )}

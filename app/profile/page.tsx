@@ -29,23 +29,50 @@ export default function ProfilePage() {
   const earned = transactions.filter(t => t.status === 'earned').reduce((sum, t) => sum + t.amount, 0)
   const pending = transactions.filter(t => t.status === 'pending').reduce((sum, t) => sum + t.amount, 0)
 
+  const buildEarned = transactions.filter(t => t.type === 'build' && t.status === 'earned').reduce((sum, t) => sum + t.amount, 0)
+  const buildPending = transactions.filter(t => t.type === 'build' && t.status === 'pending').reduce((sum, t) => sum + t.amount, 0)
+  const reviewEarned = transactions.filter(t => t.type === 'review' && t.status === 'earned').reduce((sum, t) => sum + t.amount, 0)
+  const reviewPending = transactions.filter(t => t.type === 'review' && t.status === 'pending').reduce((sum, t) => sum + t.amount, 0)
+  const assembleEarned = transactions.filter(t => t.type === 'assemble' && t.status === 'earned').reduce((sum, t) => sum + t.amount, 0)
+  const assemblePending = transactions.filter(t => t.type === 'assemble' && t.status === 'pending').reduce((sum, t) => sum + t.amount, 0)
+
   return (
     <div className="p-8 max-w-3xl mx-auto">
       <h1 className="text-2xl font-bold mb-2">{currentUser.name}</h1>
       <p className="text-gray-500 text-sm mb-6">{currentUser.role.toUpperCase()}</p>
 
-      <div className="grid grid-cols-3 gap-4 mb-8">
-        <div className="border border-gray-200 rounded-lg p-4 bg-white text-center">
-          <div className="text-3xl font-bold text-blue-600">{earned}</div>
-          <div className="text-sm text-gray-500 mt-1">Total Points</div>
-        </div>
-        <div className="border border-gray-200 rounded-lg p-4 bg-white text-center">
-          <div className="text-3xl font-bold text-green-600">{earned}</div>
-          <div className="text-sm text-gray-500 mt-1">Earned</div>
-        </div>
-        <div className="border border-gray-200 rounded-lg p-4 bg-white text-center">
-          <div className="text-3xl font-bold text-amber-500">{pending}</div>
-          <div className="text-sm text-gray-500 mt-1">Pending</div>
+      <div className="space-y-3 mb-8">
+        {[
+          { label: 'Build Points', earned: buildEarned, pending: buildPending, color: 'text-blue-600' },
+          { label: 'Review Points', earned: reviewEarned, pending: reviewPending, color: 'text-purple-600' },
+          { label: 'Assemble Points', earned: assembleEarned, pending: assemblePending, color: 'text-teal-600' },
+        ].map(row => (
+          <div key={row.label} className="border border-gray-200 rounded-lg px-5 py-3 bg-white flex items-center justify-between">
+            <span className={`font-semibold text-sm ${row.color}`}>{row.label}</span>
+            <div className="flex gap-6">
+              <div className="text-center">
+                <div className={`text-xl font-bold ${row.color}`}>{row.earned}</div>
+                <div className="text-xs text-gray-400">Earned</div>
+              </div>
+              <div className="text-center">
+                <div className="text-xl font-bold text-amber-500">{row.pending}</div>
+                <div className="text-xs text-gray-400">Pending</div>
+              </div>
+            </div>
+          </div>
+        ))}
+        <div className="border border-gray-200 rounded-lg px-5 py-3 bg-gray-50 flex items-center justify-between">
+          <span className="font-semibold text-sm text-gray-600">Total</span>
+          <div className="flex gap-6">
+            <div className="text-center">
+              <div className="text-xl font-bold text-green-600">{earned}</div>
+              <div className="text-xs text-gray-400">Earned</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xl font-bold text-amber-500">{pending}</div>
+              <div className="text-xs text-gray-400">Pending</div>
+            </div>
+          </div>
         </div>
       </div>
 

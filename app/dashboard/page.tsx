@@ -225,12 +225,21 @@ export default function DashboardPage() {
                     <span>Main Contact: {p.main_contact_name ?? 'Not assigned yet'}</span>
                     <span>Submitted: {new Date(p.created_at).toLocaleDateString()}</span>
                   </div>
+                  {p.status === 'finished' && (
+                    <a
+                      href={`/archive/${p.id}`}
+                      className="text-xs text-teal-600 hover:underline mt-1 block"
+                    >
+                      View Archive →
+                    </a>
+                  )}
                 </div>
               ))}
             </div>
           )}
         </div>
       )}
+
 
       {/* DEVELOPER */}
       {['l1', 'l2', 'l3'].includes(currentUser.role) && (
@@ -316,6 +325,11 @@ export default function DashboardPage() {
                   <div className="flex gap-2">
                     <span className={`text-xs px-2 py-1 rounded ${statusColors[p.status]}`}>{p.status}</span>
                     <span className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-700">{p.priority}</span>
+                    {p.status === 'finished' && (
+                      <a href={`/archive/${p.id}`} className="text-xs text-teal-600 hover:underline">
+                        Archive →
+                      </a>
+                    )}
                   </div>
                 </div>
               ))}

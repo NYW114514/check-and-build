@@ -38,7 +38,7 @@ useEffect(() => {
         tasks.map(async task => {
           const { data: rejected } = await supabase
             .from('submissions')
-            .select('*, reviews(*)')
+            .select('id')
             .eq('task_id', task.id)
             .eq('builder_id', currentUser.id)
             .eq('status', 'rejected')
@@ -46,9 +46,32 @@ useEffect(() => {
             .limit(1)
             .maybeSingle()
 
+          let rejectedFeedback = null
+          let rejectedBy = null
+          if (rejected) {
+            const { data: review } = await supabase
+              .from('reviews')
+              .select('feedback, reviewer_id')
+              .eq('submission_id', rejected.id)
+              .eq('decision', 'rejected')
+              .order('reviewed_at', { ascending: false })
+              .limit(1)
+              .maybeSingle()
+            rejectedFeedback = review?.feedback ?? null
+            if (review?.reviewer_id) {
+              const { data: reviewer } = await supabase
+                .from('users')
+                .select('name')
+                .eq('id', review.reviewer_id)
+                .single()
+              rejectedBy = reviewer?.name ?? null
+            }
+          }
+
           return {
             ...task,
-            rejectedFeedback: rejected?.reviews?.[0]?.feedback ?? null,
+            rejectedFeedback,
+            rejectedBy,
           }
         })
       )
@@ -95,7 +118,9 @@ useEffect(() => {
               )}
               {(task as any).rejectedFeedback && (
                 <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded">
-                  <p className="text-xs font-bold text-red-600 mb-0.5">⚠ Rejected — Reviewer feedback:</p>
+                  <p className="text-xs font-bold text-red-600 mb-0.5">
+                    ⚠ Rejected by {(task as any).rejectedBy ?? 'Reviewer'}:
+                  </p>
                   <p className="text-xs text-red-700">{(task as any).rejectedFeedback}</p>
                 </div>
               )}

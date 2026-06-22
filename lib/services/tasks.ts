@@ -38,26 +38,6 @@ export async function createTask(
 }
 
 export async function enrollTask(taskId: string, userId: string): Promise<void> {
-  const { data: taskData, error: taskError } = await supabase
-    .from('tasks')
-    .select('difficulty')
-    .eq('id', taskId)
-    .single()
-
-  if (taskError) throw taskError
-
-  const { data: userData, error: userError } = await supabase
-    .from('users')
-    .select('role')
-    .eq('id', userId)
-    .single()
-
-  if (userError) throw userError
-
-  if (userData.role === 'l1' && taskData.difficulty === 'advanced') {
-    throw new Error('L1 developers can only enroll in basic tasks.')
-  }
-
   const { count, error: countError } = await supabase
     .from('task_enrollments')
     .select('*', { count: 'exact', head: true })

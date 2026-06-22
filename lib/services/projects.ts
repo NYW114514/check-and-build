@@ -45,3 +45,28 @@ export async function updateProjectStatus(
   if (error) throw error
   return data
 }
+
+export async function claimProject(
+  projectId: string,
+  l3UserId: string
+): Promise<Project> {
+  const { data: user, error: userError } = await supabase
+    .from('users')
+    .select('email')
+    .eq('id', l3UserId)
+    .single()
+  if (userError) throw userError
+
+  const { data, error } = await supabase
+    .from('projects')
+    .update({
+      l3_owner_id: l3UserId,
+      contact_email: user.email,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', projectId)
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}

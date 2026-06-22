@@ -16,14 +16,12 @@ const roleLinks: Record<string, { href: string; label: string }[]> = {
   l1: [
     { href: '/dashboard', label: 'Home' },
     { href: '/projects', label: 'Projects' },
-    { href: '/tasks', label: 'Task Board' },
     { href: '/tasks/submit', label: 'Submit' },
     { href: '/profile', label: 'Profile' },
   ],
   l2: [
     { href: '/dashboard', label: 'Home' },
     { href: '/projects', label: 'Projects' },
-    { href: '/tasks', label: 'Task Board' },
     { href: '/tasks/submit', label: 'Submit' },
     { href: '/review', label: 'Review' },
     { href: '/profile', label: 'Profile' },
@@ -31,7 +29,6 @@ const roleLinks: Record<string, { href: string; label: string }[]> = {
   l3: [
     { href: '/dashboard', label: 'Home' },
     { href: '/projects', label: 'Projects' },
-    { href: '/tasks', label: 'Task Board' },
     { href: '/tasks/submit', label: 'Submit' },
     { href: '/review', label: 'Review' },
     { href: '/assembly', label: 'Assembly' },
@@ -40,6 +37,7 @@ const roleLinks: Record<string, { href: string; label: string }[]> = {
   admin: [
     { href: '/dashboard', label: 'Home' },
     { href: '/admin', label: 'Manage' },
+    { href: '/admin/review', label: 'Review' },
     { href: '/admin/users', label: 'Users' },
     { href: '/profile', label: 'Profile' },
   ],

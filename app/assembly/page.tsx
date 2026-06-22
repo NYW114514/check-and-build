@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useUser } from '../../lib/context/UserContext'
 import { supabase } from '../../lib/supabase'
-import { approveSubmission, rejectSubmission } from '../../lib/services/reviews'
 import { Project, Task } from '../../lib/types'
+import { approveSubmission, rejectToBuilder, returnToInitialReviewer, createProjectReview } from '../../lib/services/reviews'
 
 interface TaskWithDetails extends Task {
   submission?: {
@@ -17,6 +17,7 @@ interface TaskWithDetails extends Task {
   review?: {
     decision: string
     feedback: string | null
+    reviewer_link?: string | null
     reviewer_name?: string
   }
 }
@@ -24,7 +25,6 @@ interface TaskWithDetails extends Task {
 interface ProjectWithTasks extends Project {
   tasks: TaskWithDetails[]
   subscriber_name?: string
-  admin_feedback?: string | null
 }
 
 export default function AssemblyPage() {
@@ -34,6 +34,12 @@ export default function AssemblyPage() {
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [feedback, setFeedback] = useState<Record<string, string>>({})
+  const [reviewerLink, setReviewerLink] = useState<Record<string, string>>({})
+
+  // project-level review form
+  const [projectFeedback, setProjectFeedback] = useState('')
+  const [projectReviewerLink, setProjectReviewerLink] = useState('')
+  const [showProjectReviewForm, setShowProjectReviewForm] = useState(false)
 
   useEffect(() => {
     if (!currentUser) { setLoading(false); return }
@@ -51,8 +57,13 @@ export default function AssemblyPage() {
 
       if (!allProjects) return
 
+      // Only show projects owned by this L3 or unclaimed
+      const filtered = allProjects.filter(p =>
+        p.l3_owner_id === currentUser!.id || p.l3_owner_id === null
+      )
+
       const enriched = await Promise.all(
-        allProjects.map(async project => {
+        filtered.map(async project => {
           const { data: tasks } = await supabase
             .from('tasks')
             .select('*')
@@ -107,6 +118,7 @@ export default function AssemblyPage() {
                 review: review ? {
                   decision: review.decision,
                   feedback: review.feedback,
+                  reviewer_link: review.reviewer_link,
                   reviewer_name: reviewerName,
                 } : undefined,
               }
@@ -117,7 +129,6 @@ export default function AssemblyPage() {
             ...project,
             tasks: tasksWithDetails,
             subscriber_name: subscriber?.name,
-            admin_feedback: project.admin_feedback,
           }
         })
       )
@@ -133,8 +144,15 @@ export default function AssemblyPage() {
   async function handleApproveTask(submissionId: string, taskId: string) {
     if (!currentUser) return
     try {
-      await approveSubmission(submissionId, currentUser.id, feedback[taskId])
-      setMessage('Task approved')
+      await approveSubmission(
+        submissionId,
+        currentUser.id,
+        feedback[taskId] || undefined,
+        reviewerLink[taskId] || undefined
+      )
+      setFeedback(prev => { const n = { ...prev }; delete n[taskId]; return n })
+      setReviewerLink(prev => { const n = { ...prev }; delete n[taskId]; return n })
+      setMessage('Task approved — moved to pending final approval')
       await refreshProject()
     } catch (e: unknown) {
       setMessage(e instanceof Error ? e.message : 'Failed to approve')
@@ -145,12 +163,41 @@ export default function AssemblyPage() {
     if (!currentUser) return
     if (!feedback[taskId]) return setMessage('Please provide feedback before rejecting')
     try {
-      await rejectSubmission(submissionId, currentUser.id, feedback[taskId])
-      setFeedback(prev => ({ ...prev, [taskId]: '' }))
+      await returnToInitialReviewer(
+        submissionId,
+        currentUser.id,
+        feedback[taskId],
+        reviewerLink[taskId] || undefined
+      )
+      setFeedback(prev => { const n = { ...prev }; delete n[taskId]; return n })
+      setReviewerLink(prev => { const n = { ...prev }; delete n[taskId]; return n })
       setMessage('Task rejected, sent back to developer')
       await refreshProject()
     } catch (e: unknown) {
       setMessage(e instanceof Error ? e.message : 'Failed to reject')
+    }
+  }
+
+  async function handleProjectReview(decision: 'approved' | 'rejected') {
+    if (!currentUser || !selectedProject) return
+    if (decision === 'rejected' && !projectFeedback.trim()) {
+      return setMessage('Feedback is required when rejecting a project')
+    }
+    try {
+      await createProjectReview(
+        selectedProject.id,
+        currentUser.id,
+        'l3_initial',
+        decision,
+        projectFeedback || undefined,
+        projectReviewerLink || undefined
+      )
+      setProjectFeedback('')
+      setProjectReviewerLink('')
+      setShowProjectReviewForm(false)
+      setMessage(`Project ${decision === 'approved' ? 'approved' : 'rejected'} — review recorded`)
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Failed to submit project review')
     }
   }
 
@@ -204,6 +251,7 @@ export default function AssemblyPage() {
           review: review ? {
             decision: review.decision,
             feedback: review.feedback,
+            reviewer_link: review.reviewer_link,
             reviewer_name: reviewerName,
           } : undefined,
         }
@@ -244,6 +292,7 @@ export default function AssemblyPage() {
       setMessage(e instanceof Error ? e.message : 'Failed to reset tasks')
     }
   }
+
   async function handleMarkReady() {
     if (!selectedProject) return
     const allApproved = selectedProject.tasks.length > 0 &&
@@ -265,7 +314,6 @@ export default function AssemblyPage() {
         status: 'pending',
         description: `L3 assembly payout: ${taskCount} tasks × 10 pts`,
       })
-      // await supabase.rpc('increment_points', { uid: currentUser!.id, pts: taskCount * 10 })
 
       setMessage(`Project marked as ready for admin. You earned ${taskCount * 10} assembly points.`)
       const updated = { ...selectedProject, status: 'ready_for_admin' as const, admin_feedback: null }
@@ -290,6 +338,7 @@ export default function AssemblyPage() {
     open: 'bg-gray-100 text-gray-600',
     in_progress: 'bg-blue-100 text-blue-700',
     submitted: 'bg-yellow-100 text-yellow-700',
+    pending_final: 'bg-orange-100 text-orange-700',
     approved: 'bg-green-100 text-green-700',
   }
 
@@ -316,10 +365,11 @@ export default function AssemblyPage() {
             )}
             {projects.map(p => {
               const allApproved = p.tasks.length > 0 && p.tasks.every(t => t.status === 'approved')
+              const isOwner = p.l3_owner_id === currentUser.id
               return (
                 <div
                   key={p.id}
-                  onClick={() => setSelectedProject(p)}
+                  onClick={() => { setSelectedProject(p); setShowProjectReviewForm(false) }}
                   className={`border rounded-lg p-3 cursor-pointer hover:border-blue-400 ${
                     selectedProject?.id === p.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'
                   }`}
@@ -329,6 +379,9 @@ export default function AssemblyPage() {
                     <span className={`text-xs px-2 py-0.5 rounded ${statusColors[p.status] ?? 'bg-gray-100 text-gray-600'}`}>
                       {p.status}
                     </span>
+                    {isOwner && (
+                      <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700">Owner</span>
+                    )}
                     {allApproved && p.status !== 'ready_for_admin' && (
                       <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">✓ ready</span>
                     )}
@@ -390,6 +443,53 @@ export default function AssemblyPage() {
                 )}
               </div>
 
+              {/* Project-level review form */}
+              {selectedProject.l3_owner_id === currentUser.id && (
+                <div className="mb-4 border border-purple-200 rounded-lg bg-purple-50 p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-semibold text-purple-700">L3 Project Review</p>
+                    <button
+                      onClick={() => setShowProjectReviewForm(!showProjectReviewForm)}
+                      className="text-xs text-purple-600 hover:underline"
+                    >
+                      {showProjectReviewForm ? 'Hide' : 'Submit Review'}
+                    </button>
+                  </div>
+                  {showProjectReviewForm && (
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        placeholder="Comment (required for rejection)"
+                        className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                        value={projectFeedback}
+                        onChange={e => setProjectFeedback(e.target.value)}
+                      />
+                      <input
+                        type="text"
+                        placeholder="Your link (optional)"
+                        className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                        value={projectReviewerLink}
+                        onChange={e => setProjectReviewerLink(e.target.value)}
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleProjectReview('approved')}
+                          className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700"
+                        >
+                          Approve Project
+                        </button>
+                        <button
+                          onClick={() => handleProjectReview('rejected')}
+                          className="px-4 py-2 bg-red-500 text-white text-sm rounded hover:bg-red-600"
+                        >
+                          Reject Project
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Task list */}
               <div className="space-y-3">
                 {selectedProject.tasks.map(task => (
@@ -440,20 +540,31 @@ export default function AssemblyPage() {
                           {task.review.decision}
                         </span>
                         {task.review.feedback && (
-                          <p className="text-xs text-gray-500 mt-1">Feedback: {task.review.feedback}</p>
+                          <p className="text-xs text-gray-500 mt-1">Comment: {task.review.feedback}</p>
+                        )}
+                        {task.review.reviewer_link && (
+                          <a href={task.review.reviewer_link} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline block mt-0.5">
+                            Reviewer link: {task.review.reviewer_link}
+                          </a>
                         )}
                       </div>
                     )}
 
-                    {/* L3 review actions - only show for submitted tasks with a pending submission */}
-                    {task.submission && task.status === 'submitted' && task.submission.builder_id !== currentUser.id && (
+                    {task.submission && task.status === 'submitted' && task.submission.builder_id !== currentUser.id && !task.return_to_reviewer_id && (
                       <div className="px-4 py-3 border-t border-gray-100 bg-white">
                         <input
                           type="text"
-                          placeholder="Feedback (required for rejection)"
+                          placeholder="Comment (required for rejection)"
                           className="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-2"
                           value={feedback[task.id] ?? ''}
                           onChange={e => setFeedback(prev => ({ ...prev, [task.id]: e.target.value }))}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Your link (optional)"
+                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-2"
+                          value={reviewerLink[task.id] ?? ''}
+                          onChange={e => setReviewerLink(prev => ({ ...prev, [task.id]: e.target.value }))}
                         />
                         <div className="flex gap-2">
                           <button

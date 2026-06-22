@@ -8,7 +8,7 @@ export type ProjectStatus =
   | 'pending_deployment'
   | 'finished'
 
-export type TaskStatus = 'open' | 'in_progress' | 'submitted' | 'approved'
+export type TaskStatus = 'open' | 'in_progress' | 'submitted' | 'pending_final' | 'approved'
 
 export type Difficulty = 'basic' | 'advanced'
 
@@ -19,6 +19,10 @@ export type PointType = 'build' | 'review' | 'assemble'
 export type PointStatus = 'pending' | 'earned' | 'cancelled'
 
 export type Priority = 'standard' | 'high' | 'critical'
+
+export type ReviewStage = 'initial' | 'final'
+
+export type ProjectReviewStage = 'l3_initial' | 'admin_final'
 
 export interface User {
   id: string
@@ -42,6 +46,11 @@ export interface Project {
   created_at: string
   updated_at: string
   deployed_at: string | null
+  admin_feedback: string | null
+  contact_email: string | null
+  l3_owner_id: string | null
+  final_link: string | null
+  final_comment: string | null
 }
 
 export interface Task {
@@ -57,6 +66,7 @@ export interface Task {
   approved_submission_id: string | null
   created_at: string
   updated_at: string
+  return_to_reviewer_id: string | null
 }
 
 export interface TaskEnrollment {
@@ -84,6 +94,19 @@ export interface Review {
   reviewer_id: string
   decision: 'approved' | 'rejected'
   feedback: string | null
+  reviewer_link: string | null
+  review_stage: ReviewStage
+  reviewed_at: string
+}
+
+export interface ProjectReview {
+  id: string
+  project_id: string
+  reviewer_id: string
+  stage: ProjectReviewStage
+  decision: 'approved' | 'rejected'
+  feedback: string | null
+  reviewer_link: string | null
   reviewed_at: string
 }
 
