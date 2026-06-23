@@ -239,6 +239,61 @@ export async function returnToInitialReviewer(
   return review
 }
 
+// 退给上一个终审人（Admin），task → submitted，submission 保持 pending
+export async function returnToFinalReviewer(
+  taskId: string,
+  reviewerId: string,
+  comment?: string
+): Promise<void> {
+  const { data: lastFinalReview } = await supabase
+    .from('reviews')
+    .select('reviewer_id')
+    .eq('task_id', taskId)
+    .eq('decision', 'approved')
+    .eq('review_stage', 'final')
+    .order('reviewed_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  const returnToId = lastFinalReview?.reviewer_id ?? null
+
+  if (comment) {
+    const { data: task } = await supabase
+      .from('tasks')
+      .select('approved_submission_id')
+      .eq('id', taskId)
+      .single()
+
+    if (task?.approved_submission_id) {
+      await supabase.from('reviews').insert({
+        submission_id: task.approved_submission_id,
+        task_id: taskId,
+        reviewer_id: reviewerId,
+        decision: 'rejected',
+        feedback: comment,
+        reviewer_link: null,
+        review_stage: 'final',
+      })
+    }
+  }
+
+  await supabase
+    .from('point_transactions')
+    .update({ status: 'cancelled' })
+    .eq('task_id', taskId)
+    .eq('type', 'review')
+    .eq('status', 'pending')
+
+  await supabase
+    .from('tasks')
+    .update({
+      status: 'pending_final',
+      return_to_reviewer_id: returnToId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', taskId)
+}
+
 // project 级审核
 export async function createProjectReview(
   projectId: string,

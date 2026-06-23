@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useUser } from '../../lib/context/UserContext'
 import { supabase } from '../../lib/supabase'
 import { Project, Task } from '../../lib/types'
-import { approveSubmission, rejectToBuilder, returnToInitialReviewer, createProjectReview } from '../../lib/services/reviews'
+import { approveSubmission, returnToFinalReviewer, createProjectReview } from '../../lib/services/reviews'
 
 interface TaskWithDetails extends Task {
   submission?: {
@@ -163,11 +163,10 @@ export default function AssemblyPage() {
     if (!currentUser) return
     if (!feedback[taskId]) return setMessage('Please provide feedback before rejecting')
     try {
-      await returnToInitialReviewer(
-        submissionId,
+      await returnToFinalReviewer(
+        taskId,
         currentUser.id,
-        feedback[taskId],
-        reviewerLink[taskId] || undefined
+        feedback[taskId]
       )
       setFeedback(prev => { const n = { ...prev }; delete n[taskId]; return n })
       setReviewerLink(prev => { const n = { ...prev }; delete n[taskId]; return n })
@@ -263,36 +262,16 @@ export default function AssemblyPage() {
     setProjects(prev => prev.map(p => p.id === selectedProject.id ? updatedProject : p))
   }
 
-  async function handleResetToReview() {
-    if (!selectedProject) return
+  async function handleResetTaskToReview(taskId: string, comment?: string) {
+    if (!selectedProject || !currentUser) return
     try {
-      await supabase
-        .from('point_transactions')
-        .update({ status: 'cancelled' })
-        .eq('project_id', selectedProject.id)
-        .eq('status', 'pending')
-
-      const approvedTasks = selectedProject.tasks.filter(t => t.status === 'approved')
-      await Promise.all(
-        approvedTasks.map(async t => {
-          await supabase
-            .from('tasks')
-            .update({ status: 'submitted', updated_at: new Date().toISOString() })
-            .eq('id', t.id)
-          await supabase
-            .from('submissions')
-            .update({ status: 'pending', updated_at: new Date().toISOString() })
-            .eq('task_id', t.id)
-            .eq('status', 'approved')
-        })
-      )
-      setMessage('All tasks reset to submitted, available for review again')
+      await returnToFinalReviewer(taskId, currentUser.id, comment)
+      setMessage('Task returned to Admin final review')
       await refreshProject()
     } catch (e: unknown) {
-      setMessage(e instanceof Error ? e.message : 'Failed to reset tasks')
+      setMessage(e instanceof Error ? e.message : 'Failed to reset task')
     }
   }
-
   async function handleMarkReady() {
     if (!selectedProject) return
     const allApproved = selectedProject.tasks.length > 0 &&
@@ -430,12 +409,7 @@ export default function AssemblyPage() {
                     >
                       ✓ Mark Ready for Admin
                     </button>
-                    <button
-                      onClick={handleResetToReview}
-                      className="px-4 py-2 bg-orange-500 text-white text-sm rounded hover:bg-orange-600"
-                    >
-                      ↺ Reset All to Review
-                    </button>
+
                   </div>
                 )}
                 {selectedProject.status === 'ready_for_admin' && (
@@ -582,7 +556,23 @@ export default function AssemblyPage() {
                         </div>
                       </div>
                     )}
-
+                    {task.status === 'approved' && (
+                      <div className="px-4 py-2 border-t border-gray-100 bg-white space-y-2">
+                        <input
+                          type="text"
+                          placeholder="Comment for Admin (optional)"
+                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                          value={feedback[task.id] ?? ''}
+                          onChange={e => setFeedback(prev => ({ ...prev, [task.id]: e.target.value }))}
+                        />
+                        <button
+                          onClick={() => handleResetTaskToReview(task.id, feedback[task.id] || undefined)}
+                          className="text-xs px-3 py-1.5 border border-orange-200 text-orange-600 rounded hover:bg-orange-50"
+                        >
+                          ↺ Return to Admin Review
+                        </button>
+                      </div>
+                    )}
                     {!task.submission && (
                       <div className="px-4 py-2 bg-gray-50 border-t border-gray-100">
                         <p className="text-xs text-gray-400 italic">No submission yet</p>
