@@ -27,7 +27,7 @@ interface IntakePayload {
   }
   core_logic_specs?: {
     primary_operations?: string[]
-    financial_rules?: string[]
+    business_rules?: string[]
   }
   ai_complexity_estimate?: {
     difficulty?: string
@@ -102,12 +102,76 @@ export default function IntakePage() {
   const [submitted, setSubmitted] = useState(false)
   const [showRawJSON, setShowRawJSON] = useState(false)
   const [error, setError] = useState('')
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null)
+  const [userNotes, setUserNotes] = useState('')
 
   const userMessageCount = messages.filter(m => m.role === 'user').length
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const ext = file.name.split('.').pop()?.toLowerCase()
+
+    if (ext === 'pdf') {
+      setError('PDF support coming soon. Please upload a .txt or .docx file.')
+      e.target.value = ''
+      return
+    }
+
+    if (ext !== 'txt' && ext !== 'docx') {
+      setError('Unsupported file type. Please upload .txt or .docx.')
+      e.target.value = ''
+      return
+    }
+
+    try {
+      setLoading(true)
+      let text = ''
+
+      if (ext === 'txt') {
+        text = await file.text()
+        if (text.length > 20000) {
+          text = text.slice(0, 20000)
+          setError('Document truncated to 20,000 characters.')
+        }
+      } else if (ext === 'docx') {
+        const formData = new FormData()
+        formData.append('file', file)
+        const res = await fetch('/api/extract-document', {
+          method: 'POST',
+          body: formData,
+        })
+        const data = await res.json()
+        if (data.error) throw new Error(data.error)
+        text = data.text
+        if (data.truncated) setError('Document truncated to 20,000 characters.')
+      }
+
+      const userMessage = `[Uploaded document: ${file.name}. ]\n\n${text}`
+      const updatedMessages = [...messages, { role: 'user' as const, content: userMessage }]
+      setMessages(updatedMessages)
+      setUploadedFileName(file.name)
+
+      const res = await fetch('/api/intake', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'chat', messages: updatedMessages }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setMessages(prev => [...prev, { role: 'assistant', content: data.content }])
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to process file')
+    } finally {
+      setLoading(false)
+      e.target.value = ''
+    }
+  }
 
   async function handleSend() {
     if (!input.trim() || loading) return
@@ -169,7 +233,15 @@ export default function IntakePage() {
         main_contact_id: null,
         priority: payload.urgency_level ?? 'standard',
         status: 'pending',
-        intake_payload: payload as Record<string, unknown>,
+        intake_payload: {
+          ...(payload as Record<string, unknown>),
+          user_notes: userNotes || null,
+        },
+        admin_feedback: null,
+        contact_email: null,
+        l3_owner_id: null,
+        final_link: null,
+        final_comment: null,
       })
       setSubmitted(true)
     } catch (e: unknown) {
@@ -209,6 +281,7 @@ export default function IntakePage() {
                 content: "Hi! I'm your Technical Product Manager. Tell me about the financial tool you'd like to build — what problem are you trying to solve?",
               }])
               setInput('')
+              setUserNotes('')
             }}
             className="px-6 py-2 border border-gray-300 text-gray-600 rounded hover:bg-gray-50"
           >
@@ -282,7 +355,7 @@ export default function IntakePage() {
               </div>
               <div>
                 <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Financial Rules</p>
-                <ArrayField items={payload.core_logic_specs?.financial_rules} />
+                <ArrayField items={payload.core_logic_specs?.business_rules} />
               </div>
             </Card>
 
@@ -327,6 +400,17 @@ export default function IntakePage() {
               )}
             </div>
 
+            <div className="border border-gray-200 rounded-lg bg-white p-5">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Additional Notes (optional)</p>
+              <textarea
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                rows={3}
+                placeholder="Any additional context or requirements you'd like to add..."
+                value={userNotes}
+                onChange={e => setUserNotes(e.target.value)}
+              />
+            </div>
+
           </div>
 
           {/* Buttons */}
@@ -366,9 +450,15 @@ export default function IntakePage() {
             <div className={`max-w-[70%] px-4 py-3 rounded-lg text-base ${
               msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'
             }`}>
-              {msg.role === 'assistant'
-                ? <ReactMarkdown>{msg.content}</ReactMarkdown>
-                : msg.content}
+              {msg.role === 'user' ? (
+                msg.content.startsWith('[Uploaded document:') ? (
+                  <span className="text-sm">📎 {msg.content.split('\n')[0].replace('[', '').replace(']', '')}</span>
+                ) : (
+                  msg.content
+                )
+              ) : (
+                <ReactMarkdown>{msg.content}</ReactMarkdown>
+              )}
             </div>
           </div>
         ))}
@@ -378,6 +468,22 @@ export default function IntakePage() {
           </div>
         )}
         <div ref={bottomRef} />
+      </div>
+
+      <div className="mb-2 flex items-center gap-3">
+        <label className="cursor-pointer text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">
+          <span>📎 Upload document (.txt, .docx)</span>
+          <input
+            type="file"
+            accept=".txt,.docx,.pdf"
+            className="hidden"
+            onChange={handleFileUpload}
+            disabled={loading}
+          />
+        </label>
+        {uploadedFileName && (
+          <span className="text-xs text-green-600">✓ {uploadedFileName}</span>
+        )}
       </div>
 
       {userMessageCount >= 2 && (

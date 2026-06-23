@@ -154,14 +154,24 @@ Required JSON schema:
   },
   "core_logic_specs": {
     "primary_operations": ["array of main calculations/operations"],
-    "financial_rules": ["array of financial rules/constraints"]
+    "business_rules": ["array of business rules/constraints"]
+  },
+  "implementation_context": {
+    "functional_modules": ["array of major product modules or features"],
+    "technical_components": ["array of technical components implied, e.g. frontend, backend, data pipeline, AI model, integration"],
+    "prototype_scope": "string - what the prototype should demonstrate and what can be mocked or deferred",
+    "prototype_assumptions": ["array of assumptions made for the prototype stage"],
+    "known_constraints": ["array of constraints, missing data, external dependencies, or non-goals"]
   },
   "ai_complexity_estimate": {
     "difficulty": "basic" or "advanced",
     "suggested_task_count": number between 3 and 8,
     "reasoning": "string - brief explanation of complexity estimate"
   }
-}`
+}
+
+
+  `
 
 type ChatMessage = {
   role: 'user' | 'assistant' | 'system'

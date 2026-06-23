@@ -39,6 +39,9 @@ export default function AdminPage() {
   const [finalLink, setFinalLink] = useState('')
   const [finalComment, setFinalComment] = useState('')
   const [showFinalForm, setShowFinalForm] = useState(false)
+  const [suggestions, setSuggestions] = useState<any[]>([])
+  const [suggesting, setSuggesting] = useState(false)
+  const [editingSuggestion, setEditingSuggestion] = useState<number | null>(null)
 
   const [editTask, setEditTask] = useState({
     title: '',
@@ -61,6 +64,7 @@ export default function AdminPage() {
     description: '',
     dod_criteria: '',
     difficulty: 'basic' as 'basic' | 'advanced',
+    point_value: 10,
   })
 
   useEffect(() => {
@@ -152,98 +156,98 @@ export default function AdminPage() {
     return flow[current] ?? null
   }
 
-async function handleUpdateStatus() {
-  if (!selectedProject) return
-  const nextStatus = getNextStatus(selectedProject.status)
-  if (!nextStatus) return setMessage('Project is already finished')
+  async function handleUpdateStatus() {
+    if (!selectedProject) return
+    const nextStatus = getNextStatus(selectedProject.status)
+    if (!nextStatus) return setMessage('Project is already finished')
 
-  if (nextStatus === 'in_review') {
-    const hasProgress = tasks.some(t => t.status === 'submitted' || t.status === 'approved')
-    if (!hasProgress) return setMessage('Cannot move to review before any task is submitted or approved')
+    if (nextStatus === 'in_review') {
+      const hasProgress = tasks.some(t => t.status === 'submitted' || t.status === 'approved')
+      if (!hasProgress) return setMessage('Cannot move to review before any task is submitted or approved')
+    }
+
+    if (nextStatus === 'ready_for_admin' || nextStatus === 'pending_deployment') {
+      const allApproved = tasks.length > 0 && tasks.every(t => t.status === 'approved')
+      if (!allApproved) return setMessage('All tasks must be approved before proceeding')
+    }
+
+    if (nextStatus === 'finished') {
+      setShowFinalForm(true)
+      return
+    }
+
+    try {
+      if (nextStatus === 'active' && !selectedProject.contact_email && currentUser?.email) {
+        await supabase
+          .from('projects')
+          .update({ contact_email: currentUser.email })
+          .eq('id', selectedProject.id)
+      }
+
+      const updated = await updateProjectStatus(selectedProject.id, nextStatus)
+      setSelectedProject(updated)
+      setProjects(prev => prev.map(p => p.id === updated.id ? updated : p))
+      setMessage(`Project status updated to ${nextStatus}`)
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Failed to update status')
+    }
   }
 
-  if (nextStatus === 'ready_for_admin' || nextStatus === 'pending_deployment') {
-    const allApproved = tasks.length > 0 && tasks.every(t => t.status === 'approved')
-    if (!allApproved) return setMessage('All tasks must be approved before proceeding')
-  }
+  async function handleFinishProject() {
+    if (!selectedProject || !currentUser) return
+    try {
+      const { data: pendingTxns } = await supabase
+        .from('point_transactions')
+        .select('user_id, amount')
+        .eq('project_id', selectedProject.id)
+        .eq('status', 'pending')
 
-  if (nextStatus === 'finished') {
-    setShowFinalForm(true)
-    return
-  }
+      await supabase
+        .from('point_transactions')
+        .update({ status: 'earned' })
+        .eq('project_id', selectedProject.id)
+        .eq('status', 'pending')
 
-  try {
-    if (nextStatus === 'active' && !selectedProject.contact_email && currentUser?.email) {
+      if (pendingTxns) {
+        const userTotals: Record<string, number> = {}
+        pendingTxns.forEach(t => {
+          userTotals[t.user_id] = (userTotals[t.user_id] ?? 0) + t.amount
+        })
+        await Promise.all(
+          Object.entries(userTotals).map(([uid, pts]) =>
+            supabase.rpc('increment_points', { uid, pts })
+          )
+        )
+      }
+
       await supabase
         .from('projects')
-        .update({ contact_email: currentUser.email })
+        .update({
+          final_link: finalLink || null,
+          final_comment: finalComment || null,
+        })
         .eq('id', selectedProject.id)
-    }
 
-    const updated = await updateProjectStatus(selectedProject.id, nextStatus)
-    setSelectedProject(updated)
-    setProjects(prev => prev.map(p => p.id === updated.id ? updated : p))
-    setMessage(`Project status updated to ${nextStatus}`)
-  } catch (e: unknown) {
-    setMessage(e instanceof Error ? e.message : 'Failed to update status')
-  }
-}
-
-async function handleFinishProject() {
-  if (!selectedProject || !currentUser) return
-  try {
-    const { data: pendingTxns } = await supabase
-      .from('point_transactions')
-      .select('user_id, amount')
-      .eq('project_id', selectedProject.id)
-      .eq('status', 'pending')
-
-    await supabase
-      .from('point_transactions')
-      .update({ status: 'earned' })
-      .eq('project_id', selectedProject.id)
-      .eq('status', 'pending')
-
-    if (pendingTxns) {
-      const userTotals: Record<string, number> = {}
-      pendingTxns.forEach(t => {
-        userTotals[t.user_id] = (userTotals[t.user_id] ?? 0) + t.amount
+      await supabase.from('project_reviews').insert({
+        project_id: selectedProject.id,
+        reviewer_id: currentUser.id,
+        stage: 'admin_final',
+        decision: 'approved',
+        feedback: finalComment || null,
+        reviewer_link: finalLink || null,
       })
-      await Promise.all(
-        Object.entries(userTotals).map(([uid, pts]) =>
-          supabase.rpc('increment_points', { uid, pts })
-        )
-      )
+
+      const updated = await updateProjectStatus(selectedProject.id, 'finished')
+      setSelectedProject(updated)
+      setProjects(prev => prev.map(p => p.id === updated.id ? updated : p))
+      setShowFinalForm(false)
+      setFinalLink('')
+      setFinalComment('')
+      setMessage('Project finished and points settled')
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Failed to finish project')
     }
-
-    await supabase
-      .from('projects')
-      .update({
-        final_link: finalLink || null,
-        final_comment: finalComment || null,
-      })
-      .eq('id', selectedProject.id)
-
-    await supabase.from('project_reviews').insert({
-      project_id: selectedProject.id,
-      reviewer_id: currentUser.id,
-      stage: 'admin_final',
-      decision: 'approved',
-      feedback: finalComment || null,
-      reviewer_link: finalLink || null,
-    })
-
-    const updated = await updateProjectStatus(selectedProject.id, 'finished')
-    setSelectedProject(updated)
-    setProjects(prev => prev.map(p => p.id === updated.id ? updated : p))
-    setShowFinalForm(false)
-    setFinalLink('')
-    setFinalComment('')
-    setMessage('Project finished and points settled')
-  } catch (e: unknown) {
-    setMessage(e instanceof Error ? e.message : 'Failed to finish project')
   }
-}
 
   async function handleCreateProject() {
     if (!newProject.title) return setMessage('Project title is required')
@@ -293,37 +297,108 @@ async function handleFinishProject() {
         dod_criteria: newTask.dod_criteria,
         difficulty: newTask.difficulty,
         status: 'open',
-        point_value: 10,
+        point_value: newTask.point_value,
         max_developers: 3,
         return_to_reviewer_id: null,
       })
       setTasks(prev => [...prev, task])
-      setNewTask({ title: '', description: '', dod_criteria: '', difficulty: 'basic' })
+      setNewTask({ title: '', description: '', dod_criteria: '', difficulty: 'basic', point_value: 10 })
       setMessage('Task created')
     } catch (e: unknown) {
       setMessage(e instanceof Error ? e.message : 'Failed to create task')
     }
   }
 
-  async function handleSaveTask(taskId: string) {
-  try {
-    await supabase
-      .from('tasks')
-      .update({
-        title: editTask.title,
-        description: editTask.description,
-        dod_criteria: editTask.dod_criteria,
-        difficulty: editTask.difficulty,
-        updated_at: new Date().toISOString(),
+  async function handleSuggestTasks() {
+    if (!selectedProject?.intake_payload) return setMessage('No intake payload available for this project')
+    setSuggesting(true)
+    setSuggestions([])
+    try {
+      const res = await fetch('/api/admin/suggest-tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          intake_payload: selectedProject.intake_payload,
+          existing_tasks: tasks,
+        }),
       })
-      .eq('id', taskId)
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...editTask } : t))
-    setEditingTaskId(null)
-    setMessage('Task updated')
-  } catch (e: unknown) {
-    setMessage(e instanceof Error ? e.message : 'Failed to update task')
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setSuggestions(data.suggestions)
+      setMessage(`${data.suggestions.length} task suggestions generated.`)
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Failed to generate suggestions')
+    } finally {
+      setSuggesting(false)
+    }
   }
-}
+
+  async function handleCreateSuggestedTask(index: number) {
+    const s = suggestions[index]
+    if (!selectedProject) return
+    try {
+      const task = await createTask({
+        project_id: selectedProject.id,
+        title: s.title,
+        description: s.description,
+        dod_criteria: s.dod_criteria,
+        difficulty: s.difficulty,
+        status: 'open',
+        point_value: s.point_value,
+        max_developers: 3,
+        return_to_reviewer_id: null,
+      })
+      setTasks(prev => [...prev, task])
+      setSuggestions(prev => prev.filter((_, i) => i !== index))
+      setMessage('Task created')
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Failed to create task')
+    }
+  }
+
+  async function handleCreateAllSuggested() {
+    if (!selectedProject) return
+    try {
+      for (const s of suggestions) {
+        const task = await createTask({
+          project_id: selectedProject.id,
+          title: s.title,
+          description: s.description,
+          dod_criteria: s.dod_criteria,
+          difficulty: s.difficulty,
+          status: 'open',
+          point_value: s.point_value,
+          max_developers: 3,
+          return_to_reviewer_id: null,
+        })
+        setTasks(prev => [...prev, task])
+      }
+      setSuggestions([])
+      setMessage('All suggested tasks created')
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Failed to create tasks')
+    }
+  }
+
+  async function handleSaveTask(taskId: string) {
+    try {
+      await supabase
+        .from('tasks')
+        .update({
+          title: editTask.title,
+          description: editTask.description,
+          dod_criteria: editTask.dod_criteria,
+          difficulty: editTask.difficulty,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', taskId)
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...editTask } : t))
+      setEditingTaskId(null)
+      setMessage('Task updated')
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Failed to update task')
+    }
+  }
 
   async function handleDeleteTask(taskId: string) {
     try {
@@ -370,57 +445,57 @@ async function handleFinishProject() {
   }
 
   async function handleAssignTask(taskId: string, userId: string) {
-  const task = tasks.find(t => t.id === taskId)
-  if (!task) return
+    const task = tasks.find(t => t.id === taskId)
+    if (!task) return
 
-  const assignedUser = developerList.find(u => u.id === userId)
-  if (!assignedUser) return
+    const assignedUser = developerList.find(u => u.id === userId)
+    if (!assignedUser) return
 
-  if (assignedUser.role === 'l1' && task.difficulty === 'advanced') {
-    return setMessage('L1 developers cannot be assigned to advanced tasks')
-  }
-
-  const currentEnrollments = taskEnrollments[taskId] ?? []
-  if (currentEnrollments.length >= task.max_developers) {
-    return setMessage(`Task is full (max ${task.max_developers} developers)`)
-  }
-
-  if (currentEnrollments.includes(userId)) {
-    return setMessage('Developer is already assigned to this task')
-  }
-
-  try {
-    await supabase.from('task_enrollments').insert({ task_id: taskId, user_id: userId })
-    await supabase.from('tasks').update({ status: 'in_progress', updated_at: new Date().toISOString() }).eq('id', taskId)
-    setTaskEnrollments(prev => ({ ...prev, [taskId]: [...(prev[taskId] ?? []), userId] }))
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'in_progress' as const } : t))
-    setMessage('Developer assigned successfully')
-  } catch (e: unknown) {
-    setMessage(e instanceof Error ? e.message : 'Failed to assign')
-  }
-}
-
-async function handleRemoveTask(taskId: string, userId: string) {
-  const task = tasks.find(t => t.id === taskId)
-  if (!task) return
-
-  if (task.status === 'submitted' || task.status === 'approved') {
-    return setMessage('Cannot remove: this task already has a submission')
-  }
-
-  try {
-    await supabase.from('task_enrollments').delete().eq('task_id', taskId).eq('user_id', userId)
-    const remaining = (taskEnrollments[taskId] ?? []).filter(id => id !== userId)
-    if (remaining.length === 0) {
-      await supabase.from('tasks').update({ status: 'open', updated_at: new Date().toISOString() }).eq('id', taskId)
-      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'open' as const } : t))
+    if (assignedUser.role === 'l1' && task.difficulty === 'advanced') {
+      return setMessage('L1 developers cannot be assigned to advanced tasks')
     }
-    setTaskEnrollments(prev => ({ ...prev, [taskId]: remaining }))
-    setMessage('Developer removed from task')
-  } catch (e: unknown) {
-    setMessage(e instanceof Error ? e.message : 'Failed to remove')
+
+    const currentEnrollments = taskEnrollments[taskId] ?? []
+    if (currentEnrollments.length >= task.max_developers) {
+      return setMessage(`Task is full (max ${task.max_developers} developers)`)
+    }
+
+    if (currentEnrollments.includes(userId)) {
+      return setMessage('Developer is already assigned to this task')
+    }
+
+    try {
+      await supabase.from('task_enrollments').insert({ task_id: taskId, user_id: userId })
+      await supabase.from('tasks').update({ status: 'in_progress', updated_at: new Date().toISOString() }).eq('id', taskId)
+      setTaskEnrollments(prev => ({ ...prev, [taskId]: [...(prev[taskId] ?? []), userId] }))
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'in_progress' as const } : t))
+      setMessage('Developer assigned successfully')
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Failed to assign')
+    }
   }
-}
+
+  async function handleRemoveTask(taskId: string, userId: string) {
+    const task = tasks.find(t => t.id === taskId)
+    if (!task) return
+
+    if (task.status === 'submitted' || task.status === 'approved') {
+      return setMessage('Cannot remove: this task already has a submission')
+    }
+
+    try {
+      await supabase.from('task_enrollments').delete().eq('task_id', taskId).eq('user_id', userId)
+      const remaining = (taskEnrollments[taskId] ?? []).filter(id => id !== userId)
+      if (remaining.length === 0) {
+        await supabase.from('tasks').update({ status: 'open', updated_at: new Date().toISOString() }).eq('id', taskId)
+        setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'open' as const } : t))
+      }
+      setTaskEnrollments(prev => ({ ...prev, [taskId]: remaining }))
+      setMessage('Developer removed from task')
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Failed to remove')
+    }
+  }
 
   const subscribers = users.filter(u => u.role === 'subscriber')
   const mainContacts = users.filter(u => u.role === 'admin' || u.role === 'l3')
@@ -684,12 +759,110 @@ async function handleRemoveTask(taskId: string, userId: string) {
 
               <div className="flex justify-end mb-3">
                 <button
-                  disabled
-                  className="text-xs px-3 py-1.5 border border-gray-200 text-gray-400 rounded cursor-not-allowed"
+                  onClick={handleSuggestTasks}
+                  disabled={suggesting || !selectedProject?.intake_payload}
+                  className="text-xs px-3 py-1.5 border border-purple-200 text-purple-600 rounded hover:bg-purple-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  ✦ Suggest Tasks (coming soon)
+                  {suggesting ? 'Generating...' : '✦ Suggest Tasks'}
                 </button>
               </div>
+
+              {/* AI Suggested Tasks */}
+              {suggestions.length > 0 && (
+                <div className="mb-4 border border-purple-200 rounded-lg bg-purple-50 p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-sm font-semibold text-purple-700">AI Suggested Tasks ({suggestions.length})</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleCreateAllSuggested}
+                        className="text-xs px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700"
+                      >
+                        Create All
+                      </button>
+                      <button
+                        onClick={handleSuggestTasks}
+                        disabled={suggesting}
+                        className="text-xs px-3 py-1.5 border border-purple-300 text-purple-600 rounded hover:bg-purple-100 disabled:opacity-50"
+                      >
+                        Regenerate
+                      </button>
+                      <button
+                        onClick={() => setSuggestions([])}
+                        className="text-xs px-3 py-1.5 border border-gray-300 text-gray-500 rounded hover:bg-gray-100"
+                      >
+                        Discard
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    {suggestions.map((s, i) => (
+                      <div key={i} className="border border-purple-100 rounded-lg bg-white p-3">
+                        {editingSuggestion === i ? (
+                          <div className="space-y-2">
+                            <input
+                              className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+                              value={s.title}
+                              onChange={e => setSuggestions(prev => prev.map((x, idx) => idx === i ? { ...x, title: e.target.value } : x))}
+                            />
+                            <textarea
+                              className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+                              rows={2}
+                              value={s.description}
+                              onChange={e => setSuggestions(prev => prev.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x))}
+                            />
+                            <textarea
+                              className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+                              rows={2}
+                              value={s.dod_criteria}
+                              onChange={e => setSuggestions(prev => prev.map((x, idx) => idx === i ? { ...x, dod_criteria: e.target.value } : x))}
+                            />
+                            <div className="flex gap-2">
+                              <select
+                                className="border border-gray-300 rounded px-2 py-1.5 text-sm"
+                                value={s.difficulty}
+                                onChange={e => setSuggestions(prev => prev.map((x, idx) => idx === i ? { ...x, difficulty: e.target.value } : x))}
+                              >
+                                <option value="basic">Basic</option>
+                                <option value="advanced">Advanced</option>
+                              </select>
+                              <select
+                                className="border border-gray-300 rounded px-2 py-1.5 text-sm"
+                                value={s.point_value}
+                                onChange={e => setSuggestions(prev => prev.map((x, idx) => idx === i ? { ...x, point_value: Number(e.target.value) } : x))}
+                              >
+                                <option value={10}>10 pts</option>
+                                <option value={20}>20 pts</option>
+                                <option value={30}>30 pts</option>
+                              </select>
+                              <button onClick={() => setEditingSuggestion(null)} className="text-xs px-2 py-1 bg-blue-600 text-white rounded">Done</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-start justify-between mb-1">
+                              <span className="font-medium text-sm">{s.title}</span>
+                              <div className="flex gap-1 ml-2">
+                                <span className={`text-xs px-2 py-0.5 rounded ${s.difficulty === 'advanced' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}`}>
+                                  {s.difficulty}
+                                </span>
+                                <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">{s.point_value} pts</span>
+                                <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700">{s.recommended_role?.toUpperCase()}</span>
+                              </div>
+                            </div>
+                            {s.description && <p className="text-xs text-gray-500 mb-1">{s.description}</p>}
+                            {s.dod_criteria && <p className="text-xs text-amber-700">DoD: {s.dod_criteria}</p>}
+                            <div className="flex gap-2 mt-2">
+                              <button onClick={() => setEditingSuggestion(i)} className="text-xs px-2 py-1 border border-gray-200 text-gray-500 rounded hover:bg-gray-50">Edit</button>
+                              <button onClick={() => setSuggestions(prev => prev.filter((_, idx) => idx !== i))} className="text-xs px-2 py-1 border border-red-200 text-red-500 rounded hover:bg-red-50">Remove</button>
+                              <button onClick={() => handleCreateSuggestedTask(i)} className="text-xs px-2 py-1 bg-purple-600 text-white rounded hover:bg-purple-700">Create</button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Task List with submission + review details */}
               <div className="space-y-3 mb-4">
@@ -888,7 +1061,7 @@ async function handleRemoveTask(taskId: string, userId: string) {
               </div>
 
               {/* Create Task Form - only show for non-finished projects */}
-              {selectedProject.status === 'pending' && (
+              {selectedProject.status !== 'finished' && (
                 <div className="border border-dashed border-gray-300 rounded-lg p-4 bg-white">
                   <h3 className="font-medium text-sm mb-3">Add New Task</h3>
                   <div className="space-y-2">
@@ -920,6 +1093,15 @@ async function handleRemoveTask(taskId: string, userId: string) {
                     >
                       <option value="basic">Basic</option>
                       <option value="advanced">Advanced</option>
+                    </select>
+                    <select
+                      className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                      value={newTask.point_value}
+                      onChange={e => setNewTask({ ...newTask, point_value: Number(e.target.value) })}
+                    >
+                      <option value={10}>10 pts — Basic</option>
+                      <option value={20}>20 pts — Standard</option>
+                      <option value={30}>30 pts — Advanced</option>
                     </select>
                     <button
                       onClick={handleCreateTask}
