@@ -4,16 +4,18 @@ import { useEffect, useState } from 'react'
 import { useUser } from '../../lib/context/UserContext'
 import { supabase } from '../../lib/supabase'
 import { Project, Task } from '../../lib/types'
-import { approveSubmission, returnToFinalReviewer, createProjectReview } from '../../lib/services/reviews'
+import { approveSubmission, returnToFinalReviewer, createProjectReview, rejectSubmission } from '../../lib/services/reviews'
 
 interface TaskWithDetails extends Task {
-  submission?: {
+  submissions?: {
     id: string
     github_url: string
     notes: string | null
+    status: string
     builder_name?: string
     builder_id?: string
-  }
+  }[]
+  enrolledCount?: number
   review?: {
     decision: string
     feedback: string | null
@@ -40,6 +42,7 @@ export default function AssemblyPage() {
   const [projectFeedback, setProjectFeedback] = useState('')
   const [projectReviewerLink, setProjectReviewerLink] = useState('')
   const [showProjectReviewForm, setShowProjectReviewForm] = useState(false)
+  const [expiredTasks, setExpiredTasks] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     if (!currentUser) { setLoading(false); return }
@@ -77,14 +80,12 @@ export default function AssemblyPage() {
 
           const tasksWithDetails = await Promise.all(
             (tasks ?? []).map(async task => {
-              const { data: submission } = await supabase
+              const { data: submissions } = await supabase
                 .from('submissions')
                 .select('*')
                 .eq('task_id', task.id)
-                .in('status', ['pending', 'approved'])
+                .in('status', ['pending', 'approved', 'rejected'])
                 .order('submitted_at', { ascending: false })
-                .limit(1)
-                .maybeSingle()
 
               const { data: review } = await supabase
                 .from('reviews')
@@ -94,27 +95,41 @@ export default function AssemblyPage() {
                 .limit(1)
                 .maybeSingle()
 
-              let builderName, reviewerName
-              if (submission) {
-                const { data: builder } = await supabase
-                  .from('users').select('name').eq('id', submission.builder_id).single()
-                builderName = builder?.name
-              }
+              let reviewerName
+
+              const submissionsWithNames = await Promise.all(
+                (submissions ?? []).map(async sub => {
+                  const { data: builder } = await supabase
+                    .from('users')
+                    .select('name')
+                    .eq('id', sub.builder_id)
+                    .single()
+
+                  return {
+                    id: sub.id,
+                    github_url: sub.github_url,
+                    notes: sub.notes,
+                    status: sub.status,
+                    builder_name: builder?.name,
+                    builder_id: sub.builder_id,
+
+                  }
+                })
+              )
+              const { data: enrollments } = await supabase
+                .from('task_enrollments')
+                .select('user_id')
+                .eq('task_id', task.id)
+
               if (review) {
                 const { data: reviewer } = await supabase
                   .from('users').select('name').eq('id', review.reviewer_id).single()
                 reviewerName = reviewer?.name
               }
-
               return {
                 ...task,
-                submission: submission ? {
-                  id: submission.id,
-                  github_url: submission.github_url,
-                  notes: submission.notes,
-                  builder_name: builderName,
-                  builder_id: submission.builder_id,
-                } : undefined,
+                submissions: submissionsWithNames,
+                enrolledCount: (enrollments ?? []).length,
                 review: review ? {
                   decision: review.decision,
                   feedback: review.feedback,
@@ -143,15 +158,28 @@ export default function AssemblyPage() {
 
   async function handleApproveTask(submissionId: string, taskId: string) {
     if (!currentUser) return
+    const key = `${taskId}-${submissionId}`
+
     try {
       await approveSubmission(
         submissionId,
         currentUser.id,
-        feedback[taskId] || undefined,
-        reviewerLink[taskId] || undefined
+        feedback[key] || undefined,
+        reviewerLink[key] || undefined
       )
-      setFeedback(prev => { const n = { ...prev }; delete n[taskId]; return n })
-      setReviewerLink(prev => { const n = { ...prev }; delete n[taskId]; return n })
+
+      setFeedback(prev => {
+        const n = { ...prev }
+        delete n[key]
+        return n
+      })
+
+      setReviewerLink(prev => {
+        const n = { ...prev }
+        delete n[key]
+        return n
+      })
+
       setMessage('Task approved — moved to pending final approval')
       await refreshProject()
     } catch (e: unknown) {
@@ -161,15 +189,33 @@ export default function AssemblyPage() {
 
   async function handleRejectTask(submissionId: string, taskId: string) {
     if (!currentUser) return
-    if (!feedback[taskId]) return setMessage('Please provide feedback before rejecting')
+    const key = `${taskId}-${submissionId}`
+
+    if (!feedback[key]) {
+      return setMessage('Please provide feedback before rejecting')
+    }
+
     try {
-      await returnToFinalReviewer(
-        taskId,
+      await rejectSubmission(
+        submissionId,
         currentUser.id,
-        feedback[taskId]
+        feedback[key],
+        reviewerLink[key] || undefined,
+        'initial'
       )
-      setFeedback(prev => { const n = { ...prev }; delete n[taskId]; return n })
-      setReviewerLink(prev => { const n = { ...prev }; delete n[taskId]; return n })
+
+      setFeedback(prev => {
+        const n = { ...prev }
+        delete n[key]
+        return n
+      })
+
+      setReviewerLink(prev => {
+        const n = { ...prev }
+        delete n[key]
+        return n
+      })
+
       setMessage('Task rejected, sent back to developer')
       await refreshProject()
     } catch (e: unknown) {
@@ -209,14 +255,12 @@ export default function AssemblyPage() {
 
     const tasksWithDetails = await Promise.all(
       (tasks ?? []).map(async task => {
-        const { data: submission } = await supabase
+        const { data: submissions } = await supabase
           .from('submissions')
           .select('*')
           .eq('task_id', task.id)
-          .in('status', ['pending', 'approved'])
+          .in('status', ['pending', 'approved', 'rejected'])
           .order('submitted_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
 
         const { data: review } = await supabase
           .from('reviews')
@@ -226,27 +270,42 @@ export default function AssemblyPage() {
           .limit(1)
           .maybeSingle()
 
-        let builderName, reviewerName
-        if (submission) {
-          const { data: builder } = await supabase
-            .from('users').select('name').eq('id', submission.builder_id).single()
-          builderName = builder?.name
-        }
+        let reviewerName
+
+        const submissionsWithNames = await Promise.all(
+          (submissions ?? []).map(async sub => {
+            const { data: builder } = await supabase
+              .from('users')
+              .select('name')
+              .eq('id', sub.builder_id)
+              .single()
+
+            return {
+              id: sub.id,
+              github_url: sub.github_url,
+              notes: sub.notes,
+              status: sub.status,
+              builder_name: builder?.name,
+              builder_id: sub.builder_id,
+
+            }
+          })
+        )
+
         if (review) {
           const { data: reviewer } = await supabase
             .from('users').select('name').eq('id', review.reviewer_id).single()
           reviewerName = reviewer?.name
         }
+        const { data: enrollments } = await supabase
+          .from('task_enrollments')
+          .select('user_id')
+          .eq('task_id', task.id)
 
         return {
           ...task,
-          submission: submission ? {
-            id: submission.id,
-            github_url: submission.github_url,
-            notes: submission.notes,
-            builder_name: builderName,
-            builder_id: submission.builder_id,
-          } : undefined,
+          submissions: submissionsWithNames,
+          enrolledCount: (enrollments ?? []).length,
           review: review ? {
             decision: review.decision,
             feedback: review.feedback,
@@ -262,6 +321,17 @@ export default function AssemblyPage() {
     setProjects(prev => prev.map(p => p.id === selectedProject.id ? updatedProject : p))
   }
 
+  function isTaskCompleteForAssembly(task: TaskWithDetails) {
+    const enrolledCount = task.enrolledCount ?? 0
+    const approvedCount = task.submissions?.filter(s => s.status === 'approved').length ?? 0
+
+    return (
+      (enrolledCount > 0 && approvedCount >= enrolledCount) ||
+      task.l3_marked_expired ||
+      expiredTasks[task.id]
+    )
+  }
+
   async function handleResetTaskToReview(taskId: string, comment?: string) {
     if (!selectedProject || !currentUser) return
     try {
@@ -274,11 +344,21 @@ export default function AssemblyPage() {
   }
   async function handleMarkReady() {
     if (!selectedProject) return
-    const allApproved = selectedProject.tasks.length > 0 &&
-      selectedProject.tasks.every(t => t.status === 'approved')
-    if (!allApproved) return setMessage('All tasks must be approved before marking ready for admin')
+    const allComplete = selectedProject.tasks.length > 0 &&
+      selectedProject.tasks.every(isTaskCompleteForAssembly)
+
+    if (!allComplete) {
+      return setMessage('All enrolled developers must have approved submissions, or the task must be marked as expired')
+}
 
     try {
+      const tasksToExpire = selectedProject.tasks.filter(t => expiredTasks[t.id] && !t.l3_marked_expired)
+      if (tasksToExpire.length > 0) {
+        await supabase
+          .from('tasks')
+          .update({ l3_marked_expired: true })
+          .in('id', tasksToExpire.map(t => t.id))
+      }
       await supabase
         .from('projects')
         .update({ status: 'ready_for_admin', updated_at: new Date().toISOString(), admin_feedback: null })
@@ -343,7 +423,7 @@ export default function AssemblyPage() {
               <p className="text-gray-400 text-sm">No active projects.</p>
             )}
             {projects.map(p => {
-              const allApproved = p.tasks.length > 0 && p.tasks.every(t => t.status === 'approved')
+              const allApproved = p.tasks.length > 0 && p.tasks.every(isTaskCompleteForAssembly)
               const isOwner = p.l3_owner_id === currentUser.id
               return (
                 <div
@@ -369,7 +449,7 @@ export default function AssemblyPage() {
                     )}
                   </div>
                   <div className="text-xs text-gray-400 mt-1">
-                    {p.tasks.filter(t => t.status === 'approved').length}/{p.tasks.length} tasks approved
+                    {p.tasks.filter(isTaskCompleteForAssembly).length}/{p.tasks.length} tasks ready
                   </div>
                 </div>
               )
@@ -486,25 +566,68 @@ export default function AssemblyPage() {
                       </div>
                     )}
 
-                    {task.submission && (
-                      <div className="px-4 py-2 bg-gray-50 border-t border-gray-100">
-                        <p className="text-xs font-bold text-gray-400 uppercase mb-1">Submission</p>
-                        <p className="text-xs text-gray-600">Builder: {task.submission.builder_name ?? 'Unknown'}</p>
-                        <a
-                          href={task.submission.github_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-blue-600 hover:underline block mt-0.5"
-                        >
-                          {task.submission.github_url}
-                        </a>
-                        {task.submission.notes && (
-                          <p className="text-xs text-gray-500 mt-1">Notes: {task.submission.notes}</p>
-                        )}
+                    {task.due_at && (
+                      <div className="px-4 pb-2 flex gap-4 text-xs text-gray-400">
+                        <span>Started: {new Date(task.first_enrolled_at!).toLocaleDateString()}</span>
+                        <span>Due: {new Date(task.due_at).toLocaleDateString()}</span>
                       </div>
                     )}
 
-                    {task.review && (
+                    {task.submissions && task.submissions.length > 0 && (
+                      <div className="px-4 py-2 bg-gray-50 border-t border-gray-100">
+                        <p className="text-xs font-bold text-gray-400 uppercase mb-1">
+                          Submissions ({task.submissions.length})
+                        </p>
+                        {task.submissions.map(sub => (
+                          <div key={sub.id} className="mb-2 pb-2 border-b border-gray-100 last:border-0 last:mb-0 last:pb-0">
+                            <p className="text-xs text-gray-600">
+                              Builder: {sub.builder_name ?? 'Unknown'} · 
+                              <span className={sub.status === 'approved' ? 'text-green-600' : 'text-amber-600'}>
+                                {sub.status}
+                              </span>
+                            </p>
+                            <a
+                              href={sub.github_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-blue-600 hover:underline block mt-0.5"
+                            >
+                              {sub.github_url}
+                            </a>
+                            {sub.notes && (
+                              <p className="text-xs text-gray-500 mt-0.5">Notes: {sub.notes}</p>
+                            )}
+
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {task.submissions?.some(sub => sub.status === 'approved') && (
+                      <div className="px-4 py-2 border-t border-gray-100 bg-white space-y-2">
+                        <input
+                          type="text"
+                          placeholder="Comment for Admin (optional)"
+                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                          value={feedback[`reset-${task.id}`] ?? ''}
+                          onChange={e =>
+                            setFeedback(prev => ({
+                              ...prev,
+                              [`reset-${task.id}`]: e.target.value,
+                            }))
+                          }
+                        />
+                        <button
+                          onClick={() =>
+                            handleResetTaskToReview(task.id, feedback[`reset-${task.id}`] || undefined)
+                          }
+                          className="text-xs px-3 py-1.5 border border-orange-200 text-orange-600 rounded hover:bg-orange-50"
+                        >
+                          ↺ Return task to Admin Review
+                        </button>
+                      </div>
+                    )}
+
+                    {/* {task.review && (
                       <div className="px-4 py-2 bg-green-50 border-t border-gray-100">
                         <p className="text-xs font-bold text-gray-400 uppercase mb-1">Previous Review</p>
                         <p className="text-xs text-gray-600">Reviewer: {task.review.reviewer_name ?? 'Unknown'}</p>
@@ -522,58 +645,70 @@ export default function AssemblyPage() {
                           </a>
                         )}
                       </div>
+                    )} */}
+
+                    {task.submissions && task.submissions
+                      .filter(sub => sub.status === 'pending' && sub.builder_id !== currentUser.id)
+                      .map(sub => (
+                        <div key={sub.id} className="px-4 py-3 border-t border-gray-100 bg-white">
+                          <p className="text-xs text-gray-500 mb-2">Review: {sub.builder_name ?? 'Unknown'}</p>
+                          <input
+                            type="text"
+                            placeholder="Comment (required for rejection)"
+                            className="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-2"
+                            value={feedback[`${task.id}-${sub.id}`] ?? ''}
+                            onChange={e => setFeedback(prev => ({ ...prev, [`${task.id}-${sub.id}`]: e.target.value }))}
+                          />
+                          <input
+                            type="text"
+                            placeholder="Your link (optional)"
+                            className="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-2"
+                            value={reviewerLink[`${task.id}-${sub.id}`] ?? ''}
+                            onChange={e => setReviewerLink(prev => ({ ...prev, [`${task.id}-${sub.id}`]: e.target.value }))}
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              
+                              onClick={() => handleApproveTask(sub.id, task.id)}
+                              className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => handleRejectTask(sub.id, task.id)}
+                              className="px-4 py-2 bg-red-500 text-white text-sm rounded hover:bg-red-600"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    }
+
+                    {!task.l3_marked_expired && (() => {
+                      const enrolledCount = task.enrolledCount ?? 0
+                      const approvedCount = task.submissions?.filter(s => s.status === 'approved').length ?? 0
+                      return enrolledCount > 0 && approvedCount < enrolledCount
+                    })() && (
+                      <div className="px-4 py-2 border-t border-gray-100 bg-white flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id={`expired-${task.id}`}
+                          checked={expiredTasks[task.id] ?? false}
+                          onChange={e => setExpiredTasks(prev => ({ ...prev, [task.id]: e.target.checked }))}
+                        />
+                        <label htmlFor={`expired-${task.id}`} className="text-xs text-gray-500 cursor-pointer">
+                          Mark as expired (simulate due date reached)
+                        </label>
+                      </div>
+                    )}
+                    {task.l3_marked_expired && (
+                      <div className="px-4 py-2 border-t border-gray-100 bg-amber-50">
+                        <span className="text-xs text-amber-600">⚠ Marked as expired</span>
+                      </div>
                     )}
 
-                    {task.submission && task.status === 'submitted' && task.submission.builder_id !== currentUser.id && !task.return_to_reviewer_id && (
-                      <div className="px-4 py-3 border-t border-gray-100 bg-white">
-                        <input
-                          type="text"
-                          placeholder="Comment (required for rejection)"
-                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-2"
-                          value={feedback[task.id] ?? ''}
-                          onChange={e => setFeedback(prev => ({ ...prev, [task.id]: e.target.value }))}
-                        />
-                        <input
-                          type="text"
-                          placeholder="Your link (optional)"
-                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-2"
-                          value={reviewerLink[task.id] ?? ''}
-                          onChange={e => setReviewerLink(prev => ({ ...prev, [task.id]: e.target.value }))}
-                        />
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleApproveTask(task.submission!.id, task.id)}
-                            className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700"
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => handleRejectTask(task.submission!.id, task.id)}
-                            className="px-4 py-2 bg-red-500 text-white text-sm rounded hover:bg-red-600"
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                    {task.status === 'approved' && (
-                      <div className="px-4 py-2 border-t border-gray-100 bg-white space-y-2">
-                        <input
-                          type="text"
-                          placeholder="Comment for Admin (optional)"
-                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-                          value={feedback[task.id] ?? ''}
-                          onChange={e => setFeedback(prev => ({ ...prev, [task.id]: e.target.value }))}
-                        />
-                        <button
-                          onClick={() => handleResetTaskToReview(task.id, feedback[task.id] || undefined)}
-                          className="text-xs px-3 py-1.5 border border-orange-200 text-orange-600 rounded hover:bg-orange-50"
-                        >
-                          ↺ Return to Admin Review
-                        </button>
-                      </div>
-                    )}
-                    {!task.submission && (
+                    {(!task.submissions || task.submissions.length === 0) && (
                       <div className="px-4 py-2 bg-gray-50 border-t border-gray-100">
                         <p className="text-xs text-gray-400 italic">No submission yet</p>
                       </div>

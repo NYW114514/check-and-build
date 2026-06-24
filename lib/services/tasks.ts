@@ -54,6 +54,18 @@ export async function enrollTask(taskId: string, userId: string): Promise<void> 
     .insert({ task_id: taskId, user_id: userId })
 
   if (insertError) throw insertError
+  // 第一个人 enroll 时写入时间
+  if ((count ?? 0) === 0) {
+    const now = new Date()
+    const dueAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+    await supabase
+      .from('tasks')
+      .update({
+        first_enrolled_at: now.toISOString(),
+        due_at: dueAt.toISOString(),
+      })
+      .eq('id', taskId)
+  }
 
   const { error: updateError } = await supabase
     .from('tasks')

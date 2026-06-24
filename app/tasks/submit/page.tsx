@@ -29,7 +29,7 @@ useEffect(() => {
         .from('tasks')
         .select('*')
         .in('id', taskIds)
-        .eq('status', 'in_progress')
+        .in('status', ['in_progress', 'submitted', 'pending_final', 'approved'])
       
       if (!tasks) { setLoading(false); return }
 
@@ -67,11 +67,19 @@ useEffect(() => {
               rejectedBy = reviewer?.name ?? null
             }
           }
+          const { data: mySubmission } = await supabase
+            .from('submissions')
+            .select('id, status')
+            .eq('task_id', task.id)
+            .eq('builder_id', currentUser.id)
+            .in('status', ['pending', 'approved'])
+            .maybeSingle()
 
           return {
             ...task,
             rejectedFeedback,
             rejectedBy,
+            alreadySubmitted: !!mySubmission,
           }
         })
       )
@@ -139,12 +147,16 @@ useEffect(() => {
                   value={notes[task.id] ?? ''}
                   onChange={e => setNotes({ ...notes, [task.id]: e.target.value })}
                 />
-                <button
-                  onClick={() => handleSubmit(task.id)}
-                  className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700"
-                >
-                  Submit
-                </button>
+                {(task as any).alreadySubmitted ? (
+                  <span className="text-xs text-green-600 px-4 py-2">✓ Already submitted</span>
+                ) : (
+                  <button
+                    onClick={() => handleSubmit(task.id)}
+                    className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700"
+                  >
+                    Submit
+                  </button>
+                )}
               </div>
             </div>
           ))}

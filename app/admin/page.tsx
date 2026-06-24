@@ -300,6 +300,9 @@ export default function AdminPage() {
         point_value: newTask.point_value,
         max_developers: 3,
         return_to_reviewer_id: null,
+        first_enrolled_at: null,
+        due_at: null,
+        l3_marked_expired: false,
       })
       setTasks(prev => [...prev, task])
       setNewTask({ title: '', description: '', dod_criteria: '', difficulty: 'basic', point_value: 10 })
@@ -347,6 +350,9 @@ export default function AdminPage() {
         point_value: s.point_value,
         max_developers: 3,
         return_to_reviewer_id: null,
+        first_enrolled_at: null,
+        due_at: null,
+        l3_marked_expired: false,
       })
       setTasks(prev => [...prev, task])
       setSuggestions(prev => prev.filter((_, i) => i !== index))
@@ -370,6 +376,9 @@ export default function AdminPage() {
           point_value: s.point_value,
           max_developers: 3,
           return_to_reviewer_id: null,
+          first_enrolled_at: null,
+          due_at: null,
+          l3_marked_expired: false,
         })
         setTasks(prev => [...prev, task])
       }
@@ -909,6 +918,13 @@ export default function AdminPage() {
                     {t.dod_criteria && (
                       <div className="px-4 pb-2">
                         <p className="text-xs text-amber-700">DoD: {t.dod_criteria}</p>
+                      </div>
+                    )}
+
+                    {t.due_at && (
+                      <div className="px-4 pb-2 flex gap-4 text-xs text-gray-400">
+                        <span>Started: {new Date(t.first_enrolled_at!).toLocaleDateString()}</span>
+                        <span>Due: {new Date(t.due_at).toLocaleDateString()}</span>
                       </div>
                     )}
 

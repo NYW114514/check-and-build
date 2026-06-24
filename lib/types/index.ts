@@ -67,6 +67,9 @@ export interface Task {
   created_at: string
   updated_at: string
   return_to_reviewer_id: string | null
+  first_enrolled_at: string | null
+  due_at: string | null
+  l3_marked_expired: boolean
 }
 
 export interface TaskEnrollment {

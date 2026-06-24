@@ -335,7 +335,8 @@ export default function ProjectsPage() {
                           {task.enrolledCount ?? 0}/{task.max_developers} enrolled
                         </span>
                         {/* Enroll button */}
-                        {!task.isEnrolled && (task.status === 'open' || task.status === 'in_progress') && selectedProject.status === 'active' && (
+
+                        {!task.isEnrolled && (task.enrolledCount ?? 0) < task.max_developers && selectedProject.status === 'active' && (
                           (task.enrolledCount ?? 0) < task.max_developers ? (
                             <button
                               onClick={() => handleEnroll(task.id)}
@@ -362,6 +363,13 @@ export default function ProjectsPage() {
                     {task.dod_criteria && (
                       <div className="px-4 pb-2">
                         <p className="text-xs text-amber-700">DoD: {task.dod_criteria}</p>
+                      </div>
+                    )}
+
+                    {task.due_at && (
+                      <div className="px-4 pb-2 flex gap-4 text-xs text-gray-400">
+                        <span>Started: {new Date(task.first_enrolled_at!).toLocaleDateString()}</span>
+                        <span>Due: {new Date(task.due_at).toLocaleDateString()}</span>
                       </div>
                     )}
 
