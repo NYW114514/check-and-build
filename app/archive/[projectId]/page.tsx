@@ -23,9 +23,14 @@ interface TaskRecord {
   difficulty: string
   status: string
   point_value: number
-  builder_name?: string
-  github_url?: string
-  submission_notes?: string | null
+  submissions: {
+    id: string
+    github_url: string
+    notes: string | null
+    status: string
+    builder_name?: string
+    builder_id?: string
+  }[]
   reviews: ReviewRecord[]
 }
 
@@ -93,20 +98,30 @@ export default function ArchivePage() {
 
       const tasksWithDetails = await Promise.all(
         (tasks ?? []).map(async task => {
-          const { data: submission } = await supabase
+          const { data: submissions } = await supabase
             .from('submissions')
             .select('*')
             .eq('task_id', task.id)
-            .eq('status', 'approved')
-            .maybeSingle()
+            .order('submitted_at', { ascending: true })
 
-          let builderName
-          if (submission) {
-            const { data: builder } = await supabase
-              .from('users').select('name').eq('id', submission.builder_id).single()
-            builderName = builder?.name
-          }
+          const submissionsWithNames = await Promise.all(
+            (submissions ?? []).map(async sub => {
+              const { data: builder } = await supabase
+                .from('users')
+                .select('name')
+                .eq('id', sub.builder_id)
+                .single()
 
+              return {
+                id: sub.id,
+                github_url: sub.github_url,
+                notes: sub.notes,
+                status: sub.status,
+                builder_name: builder?.name,
+                builder_id: sub.builder_id,
+              }
+            })
+          )
           const { data: reviews } = await supabase
             .from('reviews')
             .select('*')
@@ -129,9 +144,7 @@ export default function ArchivePage() {
             difficulty: task.difficulty,
             status: task.status,
             point_value: task.point_value,
-            builder_name: builderName,
-            github_url: submission?.github_url,
-            submission_notes: submission?.notes,
+            submissions: submissionsWithNames,
             reviews: reviewsWithNames,
           }
         })
@@ -258,22 +271,36 @@ export default function ArchivePage() {
               </div>
             )}
 
-            {/* Submission */}
-            {task.github_url && (
+            {/* Submissions */}
+            {task.submissions.length > 0 && (
               <div className="px-4 py-2 bg-gray-50 border-t border-gray-100">
-                <p className="text-xs font-bold text-gray-400 uppercase mb-1">Submission</p>
-                <p className="text-xs text-gray-600">Builder: {task.builder_name ?? 'Unknown'}</p>
-                <a
-                  href={task.github_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-blue-600 hover:underline block mt-0.5"
-                >
-                  {task.github_url}
-                </a>
-                {task.submission_notes && (
-                  <p className="text-xs text-gray-500 mt-1">Notes: {task.submission_notes}</p>
-                )}
+                <p className="text-xs font-bold text-gray-400 uppercase mb-1">
+                  Submissions ({task.submissions.length})
+                </p>
+
+                <div className="space-y-2">
+                  {task.submissions.map(sub => (
+                    <div
+                      key={sub.id}
+                      className="pb-2 border-b border-gray-100 last:border-0 last:pb-0"
+                    >
+                      <p className="text-xs text-gray-600">
+                        Builder: {sub.builder_name ?? 'Unknown'} · {sub.status}
+                      </p>
+                      <a
+                        href={sub.github_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-blue-600 hover:underline block mt-0.5"
+                      >
+                        {sub.github_url}
+                      </a>
+                      {sub.notes && (
+                        <p className="text-xs text-gray-500 mt-0.5">Notes: {sub.notes}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 

@@ -44,6 +44,8 @@ export default function AssemblyPage() {
   const [showProjectReviewForm, setShowProjectReviewForm] = useState(false)
   const [expiredTasks, setExpiredTasks] = useState<Record<string, boolean>>({})
 
+  const [assemblyLink, setAssemblyLink] = useState('')
+
   useEffect(() => {
     if (!currentUser) { setLoading(false); return }
     loadProjects()
@@ -344,6 +346,10 @@ export default function AssemblyPage() {
   }
   async function handleMarkReady() {
     if (!selectedProject) return
+
+    if (!assemblyLink.trim()) {
+      return setMessage('Please provide an assembly link before marking ready for admin')
+    }
     const allComplete = selectedProject.tasks.length > 0 &&
       selectedProject.tasks.every(isTaskCompleteForAssembly)
 
@@ -361,7 +367,12 @@ export default function AssemblyPage() {
       }
       await supabase
         .from('projects')
-        .update({ status: 'ready_for_admin', updated_at: new Date().toISOString(), admin_feedback: null })
+        .update({
+          status: 'ready_for_admin',
+          updated_at: new Date().toISOString(),
+          admin_feedback: null,
+          assembly_link: assemblyLink.trim(),
+        })
         .eq('id', selectedProject.id)
 
       const taskCount = selectedProject.tasks.length
@@ -428,7 +439,11 @@ export default function AssemblyPage() {
               return (
                 <div
                   key={p.id}
-                  onClick={() => { setSelectedProject(p); setShowProjectReviewForm(false) }}
+                  onClick={() => {
+                    setSelectedProject(p)
+                    setShowProjectReviewForm(false)
+                    setAssemblyLink(p.assembly_link ?? '')
+                  }}
                   className={`border rounded-lg p-3 cursor-pointer hover:border-blue-400 ${
                     selectedProject?.id === p.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'
                   }`}
@@ -482,14 +497,20 @@ export default function AssemblyPage() {
                   )}
                 </div>
                 {selectedProject.status !== 'ready_for_admin' && (
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="text"
+                      placeholder="Assembly link for Admin"
+                      className="border border-gray-300 rounded px-3 py-2 text-sm"
+                      value={assemblyLink}
+                      onChange={e => setAssemblyLink(e.target.value)}
+                    />
                     <button
                       onClick={handleMarkReady}
                       className="px-4 py-2 bg-teal-600 text-white text-sm rounded hover:bg-teal-700"
                     >
                       ✓ Mark Ready for Admin
                     </button>
-
                   </div>
                 )}
                 {selectedProject.status === 'ready_for_admin' && (

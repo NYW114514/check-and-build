@@ -709,6 +709,19 @@ export default function AdminPage() {
                     </button>
                   )}
                   {(selectedProject.status === 'ready_for_admin' || selectedProject.status === 'pending_deployment') && (
+                    <div className="space-y-2">
+                      {selectedProject.assembly_link && (
+                        <div>
+                          <a
+                            href={selectedProject.assembly_link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-blue-600 hover:underline"
+                          >
+                            L3 Assembly Link
+                          </a>
+                        </div>
+                      )}
                     <div className="flex gap-2 items-center">
                       <input
                         type="text"
@@ -740,6 +753,7 @@ export default function AdminPage() {
                         ✕ Send Back
                       </button>
                     </div>
+                  </div>
                   )}
                 </div>
               </div>
@@ -976,7 +990,7 @@ export default function AdminPage() {
                       </div>
                     )}
 
-                    {t.submission && (
+                    {/* {t.submission && (
                       <div className="px-4 py-2 bg-gray-50 border-t border-gray-100">
                         <p className="text-xs font-bold text-gray-400 uppercase mb-1">Submission</p>
                         <p className="text-xs text-gray-600">Builder: {t.submission.builder_name ?? 'Unknown'}</p>
@@ -993,7 +1007,7 @@ export default function AdminPage() {
                           <p className="text-xs text-gray-500 mt-1">Notes: {t.submission.notes}</p>
                         )}
                       </div>
-                    )}
+                    )} */}
 
                     {t.review && (
                       <div className="px-4 py-2 bg-green-50 border-t border-gray-100">

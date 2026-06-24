@@ -43,6 +43,7 @@ export interface Project {
   status: ProjectStatus
   priority: Priority
   intake_payload: Record<string, unknown> | null
+  assembly_link?: string | null
   created_at: string
   updated_at: string
   deployed_at: string | null
