@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Check and Build
 
-## Getting Started
+Check and Build is an internal development management platform for Checkit Analytics subscribers. Subscribers submit customized financial tool requests (e.g., DCF models, data scrapers, dashboards) through an AI-assisted intake process. An internal tiered development team (L1/L2/L3) claims, builds, reviews, and delivers these requests through a gamified point-based economy.
 
-First, run the development server:
+## Tech Stack
+
+- Next.js 15 + TypeScript
+- Tailwind CSS + shadcn/ui
+- Supabase (PostgreSQL)
+- Vercel (deployment)
+- Fireworks AI (AI intake and task generation)
+
+## Project Structure
+app/
+
+├── admin/        # Admin panel (project management, task breakdown, user management)
+
+├── api/          # Backend API routes (AI intake, document parsing, task suggestion)
+
+├── archive/      # Read-only project snapshot page
+
+├── assembly/     # L3 project-level review page
+
+├── dashboard/    # Role-based home page
+
+├── intake/       # Subscriber AI intake page
+
+├── profile/      # Points and transaction history
+
+├── projects/     # Developer project browser
+
+├── review/       # L2/L3 review queue
+
+└── tasks/        # Task submission page
+lib/
+
+├── context/      # Global user state
+
+├── services/     # Database service layer (projects, tasks, reviews, submissions, points, users)
+
+└── types/        # Type definitions
+
+## Local Development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Or run `start-dev.bat` directly.
