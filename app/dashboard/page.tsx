@@ -58,6 +58,9 @@ function StatCard({ label, value, color = 'blue' }: { label: string; value: numb
 export default function DashboardPage() {
   const { currentUser } = useUser()
   const [loading, setLoading] = useState(true)
+  const [openMessageProjectId, setOpenMessageProjectId] = useState<string | null>(null)
+  const [projectMessages, setProjectMessages] = useState<any[]>([])
+  const [newMessage, setNewMessage] = useState('')
 
   const [myProjects, setMyProjects] = useState<(Project & { main_contact_name?: string })[]>([])
   const [myTasks, setMyTasks] = useState<(Task & { project_title?: string })[]>([])
@@ -172,6 +175,38 @@ export default function DashboardPage() {
     }
   }
 
+  async function loadProjectMessages(projectId: string) {
+    const { data: messages } = await supabase
+      .from('project_messages')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: true })
+
+    const withNames = await Promise.all(
+      (messages ?? []).map(async (msg: any) => {
+        const { data: sender } = await supabase
+          .from('users').select('name').eq('id', msg.sender_id).single()
+        return { ...msg, sender_name: sender?.name }
+      })
+    )
+    setProjectMessages(withNames)
+  }
+
+  async function handleSendMessage(projectId: string) {
+    if (!currentUser || !newMessage.trim()) return
+    try {
+      await supabase.from('project_messages').insert({
+        project_id: projectId,
+        sender_id: currentUser.id,
+        message: newMessage.trim(),
+      })
+      setNewMessage('')
+      await loadProjectMessages(projectId)
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
   if (!currentUser) {
     return (
       <div className="flex flex-col items-center justify-center h-[calc(100vh-64px)] text-center">
@@ -233,6 +268,54 @@ export default function DashboardPage() {
                       View Archive →
                     </a>
                   )}
+                  <div className="mt-2">
+                    <button
+                      onClick={() => {
+                        if (openMessageProjectId === p.id) {
+                          setOpenMessageProjectId(null)
+                        } else {
+                          setOpenMessageProjectId(p.id)
+                          loadProjectMessages(p.id)
+                        }
+                      }}
+                      className="text-xs text-blue-600 hover:underline"
+                    >
+                      {openMessageProjectId === p.id ? 'Hide Messages' : 'Messages'}
+                    </button>
+
+                    {openMessageProjectId === p.id && (
+                      <div className="mt-2 border border-gray-200 rounded-lg p-3 bg-gray-50">
+                        <div className="space-y-2 mb-2 max-h-40 overflow-auto">
+                          {projectMessages.length === 0 && (
+                            <p className="text-xs text-gray-400 italic">No messages yet.</p>
+                          )}
+                          {projectMessages.map((msg: any) => (
+                            <div key={msg.id} className="text-xs border border-gray-100 rounded p-2 bg-white">
+                              <div className="text-gray-500 mb-0.5">
+                                {msg.sender_name ?? 'Unknown'} · {new Date(msg.created_at).toLocaleString()}
+                              </div>
+                              <div className="text-gray-700">{msg.message}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder="Reply..."
+                            className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-xs"
+                            value={newMessage}
+                            onChange={e => setNewMessage(e.target.value)}
+                          />
+                          <button
+                            onClick={() => handleSendMessage(p.id)}
+                            className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
+                          >
+                            Send
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

@@ -29,6 +29,15 @@ interface ProjectWithTasks extends Project {
   subscriber_name?: string
 }
 
+interface ProjectMessage {
+  id: string
+  project_id: string
+  sender_id: string
+  sender_name?: string
+  message: string
+  created_at: string
+}
+
 export default function AssemblyPage() {
   const { currentUser } = useUser()
   const [projects, setProjects] = useState<ProjectWithTasks[]>([])
@@ -43,6 +52,16 @@ export default function AssemblyPage() {
   const [projectReviewerLink, setProjectReviewerLink] = useState('')
   const [showProjectReviewForm, setShowProjectReviewForm] = useState(false)
   const [expiredTasks, setExpiredTasks] = useState<Record<string, boolean>>({})
+  const [newTask, setNewTask] = useState({
+    title: '',
+    description: '',
+    dod_criteria: '',
+    difficulty: 'basic' as 'basic' | 'advanced',
+    point_value: 10,
+    max_developers: 3,
+  })
+  const [projectMessages, setProjectMessages] = useState<ProjectMessage[]>([])
+  const [newMessage, setNewMessage] = useState('')
 
   const [assemblyLink, setAssemblyLink] = useState('')
 
@@ -344,6 +363,75 @@ export default function AssemblyPage() {
       setMessage(e instanceof Error ? e.message : 'Failed to reset task')
     }
   }
+
+  async function handleCreateTask() {
+    if (!selectedProject) return
+    if (!newTask.title.trim()) return setMessage('Task title is required')
+
+    try {
+      const { error } = await supabase.from('tasks').insert({
+        project_id: selectedProject.id,
+        title: newTask.title.trim(),
+        description: newTask.description || null,
+        dod_criteria: newTask.dod_criteria || null,
+        difficulty: newTask.difficulty,
+        status: 'open',
+        point_value: newTask.point_value,
+        max_developers: newTask.max_developers,
+        return_to_reviewer_id: null,
+        first_enrolled_at: null,
+        due_at: null,
+        l3_marked_expired: false,
+        review_ready_at: null,
+        selected_for_assembly_at: null,
+      })
+      if (error) throw error
+
+      setNewTask({ title: '', description: '', dod_criteria: '', difficulty: 'basic', point_value: 10, max_developers: 3 })
+      setMessage('Task created')
+      await refreshProject()
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Failed to create task')
+    }
+  }
+
+  async function loadProjectMessages(projectId: string) {
+    const { data: messages } = await supabase
+      .from('project_messages')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: true })
+
+    const withNames = await Promise.all(
+      (messages ?? []).map(async msg => {
+        const { data: sender } = await supabase
+          .from('users')
+          .select('name')
+          .eq('id', msg.sender_id)
+          .single()
+        return { ...msg, sender_name: sender?.name }
+      })
+    )
+    setProjectMessages(withNames)
+  }
+
+  async function handleSendProjectMessage() {
+    if (!selectedProject || !currentUser) return
+    if (!newMessage.trim()) return
+    try {
+      const { error } = await supabase.from('project_messages').insert({
+        project_id: selectedProject.id,
+        sender_id: currentUser.id,
+        message: newMessage.trim(),
+      })
+      if (error) throw error
+      setNewMessage('')
+      await loadProjectMessages(selectedProject.id)
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Failed to send message')
+    }
+  }
+
   async function handleMarkReady() {
     if (!selectedProject) return
 
@@ -443,6 +531,7 @@ export default function AssemblyPage() {
                     setSelectedProject(p)
                     setShowProjectReviewForm(false)
                     setAssemblyLink(p.assembly_link ?? '')
+                    loadProjectMessages(p.id)
                   }}
                   className={`border rounded-lg p-3 cursor-pointer hover:border-blue-400 ${
                     selectedProject?.id === p.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'
@@ -564,6 +653,39 @@ export default function AssemblyPage() {
                   )}
                 </div>
               )}
+
+              {/* Messages with Subscriber */}
+              <div className="mb-4 border border-gray-200 rounded-lg bg-white p-4">
+                <p className="text-sm font-semibold mb-2">Messages with Subscriber</p>
+                <div className="space-y-2 mb-3 max-h-48 overflow-auto">
+                  {projectMessages.length === 0 && (
+                    <p className="text-xs text-gray-400 italic">No messages yet.</p>
+                  )}
+                  {projectMessages.map(msg => (
+                    <div key={msg.id} className="text-xs border border-gray-100 rounded p-2 bg-gray-50">
+                      <div className="text-gray-500 mb-1">
+                        {msg.sender_name ?? 'Unknown'} · {new Date(msg.created_at).toLocaleString()}
+                      </div>
+                      <div className="text-gray-700">{msg.message}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Message to subscriber..."
+                    className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm"
+                    value={newMessage}
+                    onChange={e => setNewMessage(e.target.value)}
+                  />
+                  <button
+                    onClick={handleSendProjectMessage}
+                    className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
 
               {/* Task list */}
               <div className="space-y-3">
@@ -737,6 +859,57 @@ export default function AssemblyPage() {
                   </div>
                 ))}
               </div>
+                {selectedProject.l3_owner_id === currentUser.id && selectedProject.status !== 'ready_for_admin' && (
+                  <div className="border border-dashed border-gray-300 rounded-lg p-4 bg-white mt-4">
+                    <h3 className="font-medium text-sm mb-3">Add New Task</h3>
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        placeholder="Task title *"
+                        className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                        value={newTask.title}
+                        onChange={e => setNewTask({ ...newTask, title: e.target.value })}
+                      />
+                      <textarea
+                        placeholder="Description"
+                        className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                        rows={2}
+                        value={newTask.description}
+                        onChange={e => setNewTask({ ...newTask, description: e.target.value })}
+                      />
+                      <textarea
+                        placeholder="Definition of Done"
+                        className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                        rows={2}
+                        value={newTask.dod_criteria}
+                        onChange={e => setNewTask({ ...newTask, dod_criteria: e.target.value })}
+                      />
+                      <select
+                        className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                        value={newTask.difficulty}
+                        onChange={e => setNewTask({ ...newTask, difficulty: e.target.value as 'basic' | 'advanced' })}
+                      >
+                        <option value="basic">Basic</option>
+                        <option value="advanced">Advanced</option>
+                      </select>
+                      <select
+                        className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                        value={newTask.point_value}
+                        onChange={e => setNewTask({ ...newTask, point_value: Number(e.target.value) })}
+                      >
+                        <option value={10}>10 pts — Basic</option>
+                        <option value={20}>20 pts — Standard</option>
+                        <option value={30}>30 pts — Advanced</option>
+                      </select>
+                      <button
+                        onClick={handleCreateTask}
+                        className="w-full py-2 bg-gray-800 text-white text-sm rounded hover:bg-gray-900"
+                      >
+                        Create Task
+                      </button>
+                    </div>
+                  </div>
+                )}
             </>
           )}
         </div>
